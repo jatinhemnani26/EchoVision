@@ -35,7 +35,7 @@ class CloudMultimodalEngine:
         else:
             logger.warning("No NVIDIA_API_KEY found in .env. Running in mock simulation mode.")
 
-    def analyze_image(self, base64_image: str, intent: str, lang: str = "en-US") -> dict:
+    def analyze_image(self, base64_image: str, intent: str, lang: str = "en-US", max_tokens: int = 120) -> dict:
         """
         Sends the optimized OpenCV frame to NVIDIA Llama-3.2-Vision NIM.
         Returns a concise, spatial, and accurate natural language description for the user.
@@ -90,7 +90,7 @@ class CloudMultimodalEngine:
                         ]
                     }
                 ],
-                max_tokens=150,
+                max_tokens=max_tokens,
                 temperature=0.2,
                 top_p=0.7
             )
