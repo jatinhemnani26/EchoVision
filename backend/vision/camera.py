@@ -24,9 +24,17 @@ class CameraManager:
             if self.capture is not None and self.capture.isOpened():
                 return True
                 
-            self.capture = cv2.VideoCapture(self.camera_index, cv2.CAP_DSHOW) # CAP_DSHOW for faster startup on Windows
-            if not self.capture.isOpened():
-                logger.error(f"Failed to open camera index {self.camera_index}. Check if it is connected or blocked.")
+            import sys
+            backend = cv2.CAP_DSHOW if sys.platform.startswith("win") else cv2.CAP_ANY
+            try:
+                self.capture = cv2.VideoCapture(self.camera_index, backend)
+                if not self.capture.isOpened():
+                    logger.warning(f"No hardware camera found at index {self.camera_index}.")
+                    self.capture = None
+                    return False
+            except Exception as e:
+                logger.warning(f"Camera initialization exception: {e}")
+                self.capture = None
                 return False
             
             # Optimize for low latency (no buffering)
@@ -42,13 +50,15 @@ class CameraManager:
         """Reads a frame from the initialized camera in a thread-safe way."""
         with self.lock:
             if not self.capture or not self.capture.isOpened():
-                raise RuntimeError("Camera is not initialized. Call start() first.")
-            
-            ret, frame = self.capture.read()
-            if not ret:
-                logger.error("Failed to read frame from camera.")
                 return None
-            return frame
+            
+            try:
+                ret, frame = self.capture.read()
+                if not ret:
+                    return None
+                return frame
+            except Exception:
+                return None
 
     def release(self):
         """Releases the camera resource safely."""
