@@ -48,6 +48,21 @@ for _fp in ["debug_raw.jpg", "debug_enhanced.jpg"]:
         except Exception:
             pass
 
+# Holds the latest live frame streamed from user's active browser camera!
+LATEST_LIVE_FRAME_B64 = None
+
+class SyncFrameRequest(BaseModel):
+    image_base64: str
+
+@app.post("/api/v1/vision/sync_frame")
+def sync_live_frame(req: SyncFrameRequest):
+    global LATEST_LIVE_FRAME_B64
+    clean_b64 = req.image_base64
+    if "," in clean_b64:
+        clean_b64 = clean_b64.split(",")[1]
+    LATEST_LIVE_FRAME_B64 = clean_b64
+    return {"status": "synced"}
+
 
 class AnalyzeRequest(BaseModel):
     intent: Optional[str] = Field(default="general", description="Voice query or user intent (e.g. 'read this label', 'what is in front of me')")
@@ -132,14 +147,17 @@ async def alexa_webhook(req: dict):
     if request_type in ("LaunchRequest", "IntentRequest"):
         base64_image = None
 
-        # If running locally on hardware with an already active camera
-        if camera_manager.capture and camera_manager.capture.isOpened():
+        # Priority 1: Real-time frame streamed live from the user's browser/phone camera!
+        if LATEST_LIVE_FRAME_B64:
+            base64_image = LATEST_LIVE_FRAME_B64
+        # Priority 2: If running locally on hardware with an already active camera
+        elif camera_manager.capture and camera_manager.capture.isOpened():
             frame = camera_manager.get_frame()
             if frame is not None:
                 _, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 75])
                 base64_image = base64.b64encode(buffer).decode('utf-8')
 
-        # Fast zero-latency fallback for cloud hosts (avoids 3s hardware scan timeouts)
+        # Priority 3: Fallback demo scene if camera is not active yet
         if not base64_image:
             base64_image = CACHED_FALLBACK_B64
 

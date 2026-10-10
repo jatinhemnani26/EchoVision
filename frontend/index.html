@@ -1300,6 +1300,26 @@
     // Direct Browser Camera Stream via WebRTC
     let mediaStream = null;
     let camOn = false;
+    let cameraSyncTimer = null;
+
+    function syncLiveCameraToCloud() {
+      const video = document.getElementById('liveWebcam');
+      if (camOn && video && video.videoWidth > 0) {
+        try {
+          const canvas = document.createElement('canvas');
+          canvas.width = 640;
+          canvas.height = Math.round(video.videoHeight * (640 / video.videoWidth));
+          const ctx = canvas.getContext('2d');
+          ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+          const b64 = canvas.toDataURL('image/jpeg', 0.7);
+          fetch(`${API_BASE_URL}/api/v1/vision/sync_frame`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ image_base64: b64 })
+          }).catch(() => {});
+        } catch(e) {}
+      }
+    }
 
     async function toggleLensFeed() {
       const toggle = document.getElementById('camToggle');
@@ -1338,6 +1358,11 @@
           if (toggle) toggle.classList.add('active');
           camOn = true;
           document.getElementById('metaStatus').innerText = 'Camera Live';
+
+          // Sync first snapshot after 800ms, then every 3s so Alexa sees your live room
+          setTimeout(syncLiveCameraToCloud, 800);
+          if (cameraSyncTimer) clearInterval(cameraSyncTimer);
+          cameraSyncTimer = setInterval(syncLiveCameraToCloud, 3000);
         } catch(err) {
           console.error("Camera access error:", err);
           alert("Could not access camera: " + (err.message || "Permission denied"));
@@ -1345,6 +1370,10 @@
         }
       } else {
         // Power down browser camera stream
+        if (cameraSyncTimer) {
+          clearInterval(cameraSyncTimer);
+          cameraSyncTimer = null;
+        }
         if (mediaStream) {
           mediaStream.getTracks().forEach(track => track.stop());
           mediaStream = null;
