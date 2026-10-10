@@ -3,7 +3,11 @@ import shutil
 import logging
 from typing import Dict, Any
 import numpy as np
-import pytesseract
+
+try:
+    import pytesseract
+except ImportError:
+    pytesseract = None
 
 logger = logging.getLogger(__name__)
 
@@ -18,6 +22,9 @@ class LocalOCREngine:
 
     def _configure_tesseract_path(self):
         """Auto-detect common Windows installation paths for Tesseract OCR."""
+        if pytesseract is None:
+            return
+
         if shutil.which("tesseract"):
             return
 
@@ -34,6 +41,8 @@ class LocalOCREngine:
                 return
 
     def _check_availability(self) -> bool:
+        if pytesseract is None:
+            return False
         try:
             version = pytesseract.get_tesseract_version()
             logger.info(f"Tesseract OCR initialized (v{version}).")
@@ -42,7 +51,7 @@ class LocalOCREngine:
             return False
 
     def extract_text(self, image: np.ndarray) -> Dict[str, Any]:
-        if not self.is_available:
+        if not self.is_available or pytesseract is None:
             return {
                 "success": False,
                 "text": "",
