@@ -1076,13 +1076,38 @@
       const statusText = document.getElementById('metaStatus');
       statusText.innerText = 'Analyzing Live Frame...';
 
+      // Capture live snapshot directly from browser camera if active
+      let browserFrameB64 = null;
+      const video = document.getElementById('liveWebcam');
+      if (camOn && video && video.videoWidth > 0) {
+        try {
+          const canvas = document.createElement('canvas');
+          canvas.width = video.videoWidth;
+          canvas.height = video.videoHeight;
+          const ctx = canvas.getContext('2d');
+          ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+          browserFrameB64 = canvas.toDataURL('image/jpeg', 0.85);
+        } catch(e) {
+          console.warn("Could not capture frame from canvas:", e);
+        }
+      }
+
       // Call the REAL Phase 1/3 Backend
       try {
         const selectedLang = document.getElementById('micLang') ? document.getElementById('micLang').value : 'en-US';
+        const payload = {
+            intent: queryIntent,
+            camera_index: 0,
+            lang: selectedLang
+        };
+        if (browserFrameB64) {
+            payload.image_base64 = browserFrameB64;
+        }
+
         const response = await fetch(`${API_BASE_URL}/api/v1/vision/analyze`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ intent: queryIntent, camera_index: 0, lang: selectedLang })
+            body: JSON.stringify(payload)
         });
         
         const data = await response.json();
@@ -1274,57 +1299,68 @@
         recognition.start();
     }
 
-    // Toggle Real Backend Camera Feed Stream & Expand Viewfinder
+    // Direct Browser Camera Stream via WebRTC
+    let mediaStream = null;
     let camOn = false;
+
     async function toggleLensFeed() {
       const toggle = document.getElementById('camToggle');
       const thumb = document.getElementById('staticThumb');
-      let liveWebcam = document.getElementById('liveWebcam');
+      const liveWebcam = document.getElementById('liveWebcam');
       const plate = document.getElementById('cameraPlateWidget');
       const thumbLabel = document.getElementById('thumbLabel');
 
       if (!camOn) {
-        if (thumb) thumb.style.display = 'none';
-        
-        if (liveWebcam && liveWebcam.tagName === 'VIDEO') {
-            const img = document.createElement('img');
-            img.id = 'liveWebcam';
-            img.style.width = '100%';
-            img.style.height = '100%';
-            img.style.objectFit = 'cover';
-            img.style.display = 'block';
-            liveWebcam.replaceWith(img);
-            liveWebcam = img;
-        }
-        
-        if (liveWebcam) {
-            liveWebcam.src = `${API_BASE_URL}/api/v1/vision/stream?` + Date.now();
+        try {
+          // Request browser camera (prefers back camera on phone if available)
+          const constraints = {
+            video: {
+              width: { ideal: 1920 },
+              height: { ideal: 1080 },
+              facingMode: { ideal: "environment" }
+            },
+            audio: false
+          };
+
+          try {
+            mediaStream = await navigator.mediaDevices.getUserMedia(constraints);
+          } catch(e) {
+            mediaStream = await navigator.mediaDevices.getUserMedia({ video: true });
+          }
+
+          if (liveWebcam) {
+            liveWebcam.srcObject = mediaStream;
             liveWebcam.style.display = 'block';
+            await liveWebcam.play();
+          }
+
+          if (thumb) thumb.style.display = 'none';
+          if (plate) plate.classList.add('expanded');
+          if (thumbLabel) thumbLabel.innerText = 'Browser Lens Active (1080p 60FPS)';
+          if (toggle) toggle.classList.add('active');
+          camOn = true;
+          document.getElementById('metaStatus').innerText = 'Camera Live';
+        } catch(err) {
+          console.error("Camera access error:", err);
+          alert("Could not access camera: " + (err.message || "Permission denied"));
+          document.getElementById('metaStatus').innerText = 'Camera Access Denied';
         }
-        
-        if (plate) plate.classList.add('expanded');
-        if (thumbLabel) thumbLabel.innerText = 'Optical Feed Active (1080p 30FPS)';
-        if (toggle) toggle.classList.add('active');
-        camOn = true;
-        document.getElementById('metaStatus').innerText = 'Camera Live (1080p)';
       } else {
-        // Shut down camera display and send power-down signal to backend
-        if (liveWebcam) {
-            liveWebcam.src = '';
-            liveWebcam.style.display = 'none';
+        // Power down browser camera stream
+        if (mediaStream) {
+          mediaStream.getTracks().forEach(track => track.stop());
+          mediaStream = null;
         }
-        if (thumb) thumb.style.display = 'flex'; // Keep flex centering!
+        if (liveWebcam) {
+          liveWebcam.srcObject = null;
+          liveWebcam.style.display = 'none';
+        }
+        if (thumb) thumb.style.display = 'flex';
         if (plate) plate.classList.remove('expanded');
         if (thumbLabel) thumbLabel.innerText = 'Camera Standby';
         if (toggle) toggle.classList.remove('active');
         camOn = false;
         document.getElementById('metaStatus').innerText = 'System Ready';
-
-        try {
-            await fetch(`${API_BASE_URL}/api/v1/vision/camera/stop`, { method: 'POST' });
-        } catch(e) {
-            console.error(e);
-        }
       }
     }
 

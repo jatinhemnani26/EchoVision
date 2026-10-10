@@ -5,6 +5,7 @@ from pydantic import BaseModel, Field
 import uvicorn
 import cv2
 import base64
+import numpy as np
 from typing import Optional
 
 from vision.camera import CameraManager
@@ -40,6 +41,7 @@ class AnalyzeRequest(BaseModel):
     intent: Optional[str] = Field(default="general", description="Voice query or user intent (e.g. 'read this label', 'what is in front of me')")
     camera_index: Optional[int] = Field(default=0, description="0 for laptop webcam, 1 for external phone cam")
     lang: Optional[str] = Field(default="en-US", description="The spoken language code of the user (e.g., hi-IN, es-ES)")
+    image_base64: Optional[str] = Field(default=None, description="Direct base64 encoded JPEG from browser camera")
 
 
 @app.on_event("startup")
@@ -162,24 +164,37 @@ def video_feed(cam_index: int = 0):
 def analyze_scene(req: AnalyzeRequest):
     """
     Core 2-Tier Triage Pipeline:
-    1. Grabs live frame from hardware (starting camera on-demand if needed).
-    2. Immediately releases camera if continuous live-stream is not active.
+    1. If client sent an image from browser camera (image_base64), decode it directly.
+    2. Otherwise, grabs live frame from hardware (starting camera on-demand if needed).
     3. Runs local OCR + NVIDIA VLM analysis.
     """
-    was_streaming = stream_active
-    if not camera_manager.capture or not camera_manager.capture.isOpened():
-        camera_manager.camera_index = req.camera_index
-        if not camera_manager.start():
-            raise HTTPException(status_code=500, detail=f"Failed to access camera index {req.camera_index}.")
-
-    frame = camera_manager.get_frame()
-
-    # Power down camera sensor immediately if user hasn't enabled continuous live feed
-    if not was_streaming:
-        camera_manager.release()
+    frame = None
+    if req.image_base64:
+        try:
+            clean_b64 = req.image_base64
+            if "," in clean_b64:
+                clean_b64 = clean_b64.split(",")[1]
+            img_bytes = base64.b64decode(clean_b64)
+            nparr = np.frombuffer(img_bytes, np.uint8)
+            frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Failed to decode base64 image: {str(e)}")
 
     if frame is None:
-        raise HTTPException(status_code=500, detail="Failed to capture frame from hardware.")
+        was_streaming = stream_active
+        if not camera_manager.capture or not camera_manager.capture.isOpened():
+            camera_manager.camera_index = req.camera_index
+            if not camera_manager.start():
+                raise HTTPException(status_code=500, detail=f"Failed to access camera index {req.camera_index}.")
+
+        frame = camera_manager.get_frame()
+
+        # Power down camera sensor immediately if user hasn't enabled continuous live feed
+        if not was_streaming:
+            camera_manager.release()
+
+    if frame is None:
+        raise HTTPException(status_code=500, detail="Failed to capture frame from hardware or browser.")
 
     # Step 1: Document / Edge Preprocessing for Local OCR ONLY
     ocr_preprocessed = VisionPreprocessor.optimize_for_ocr(frame)
