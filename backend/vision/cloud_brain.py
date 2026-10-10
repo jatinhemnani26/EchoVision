@@ -47,25 +47,30 @@ class CloudMultimodalEngine:
                 "model_used": "none"
             }
 
-        lang_map = {
-            "hi-IN": "Hindi (strictly in Devanagari script)",
-            "es-ES": "Spanish",
-            "fr-FR": "French",
-            "en-US": "English"
-        }
-        literal_language = lang_map.get(lang, "English")
+        if lang == "hi-IN":
+            lang_rules = (
+                "LANGUAGE MANDATE: You MUST reply in HINDI using standard DEVANAGARI SCRIPT (हिन्दी लिपि). "
+                "Example: 'आपके सामने एक लाल रंग की वस्तु है।' "
+                "DO NOT use Latin/English alphabet (do NOT write Hinglish like 'Aapke saamne'). "
+                "Write ONLY in pure Devanagari Hindi characters."
+            )
+        elif lang == "es-ES":
+            lang_rules = "LANGUAGE MANDATE: You MUST reply completely in SPANISH (Español). Do not speak English."
+        elif lang == "fr-FR":
+            lang_rules = "LANGUAGE MANDATE: You MUST reply completely in FRENCH (Français). Do not speak English."
+        else:
+            lang_rules = "LANGUAGE MANDATE: Reply in clear, concise English."
 
         prompt_text = (
-            f"You are EchoVision, an ambient visual assistant for a visually impaired user. "
-            f"The user says: '{intent}'. "
+            f"You are EchoVision, an ambient visual assistant for a visually impaired user.\n"
+            f"{lang_rules}\n"
+            f"The user says: '{intent}'.\n"
             f"SECURITY CONSTRAINT: You MUST only answer questions related to the provided image, "
             f"the user's physical surroundings, or visual accessibility. If the user asks for code generation, "
-            f"general knowledge, math, or anything off-topic, you MUST politely refuse and state your purpose as a visual assistant. "
-            f"RULES FOR LANGUAGE:\n"
-            f"The user is speaking {literal_language}. You MUST reply strictly in {literal_language}.\n"
-            f"Analyze the image and answer the user directly in 1-2 clear, natural sentences. "
-            f"If there is written text or a document/label, read the key words clearly. "
-            f"Be precise, spatial, and helpful. Do not mention that you are an AI."
+            f"general knowledge, math, or anything off-topic, you MUST politely refuse and state your purpose as a visual assistant.\n"
+            f"Analyze the image and answer the user directly in 1-2 clear, natural, and helpful sentences. "
+            f"If there is written text or a document/label, read the key words clearly.\n"
+            f"{lang_rules}"
         )
 
         try:

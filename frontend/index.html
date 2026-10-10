@@ -1142,24 +1142,22 @@
             statusText.innerText = 'Scene Perceived';
         }
 
-        // Auto-Language TTS Detection (The "Billion User" Feature)
+        // Language TTS Binding
         const utterance = new SpeechSynthesisUtterance(textToSpeak);
         utterance.rate = 1.0;
         utterance.pitch = 0.98;
         
+        // Priority 1: User's explicitly selected language
+        let targetLang = selectedLang || 'en-US';
+        // Priority 2: Script auto-detection fallback if Devanagari is detected
         if (/[\u0900-\u097F]/.test(textToSpeak)) {
-            utterance.lang = 'hi-IN'; // Devanagari Script -> Hindi Voice
-        } else if (/(á|é|í|ó|ú|ñ|¿|¡)/i.test(textToSpeak)) {
-            utterance.lang = 'es-ES'; // Spanish accents -> Spanish Voice
-        } else if (/(à|â|æ|ç|é|è|ê|ë|î|ï|ô|œ|ù|û|ü|ÿ)/i.test(textToSpeak)) {
-            utterance.lang = 'fr-FR'; // French accents -> French Voice
-        } else {
-            utterance.lang = 'en-US';
+            targetLang = 'hi-IN';
         }
+        utterance.lang = targetLang;
 
-        // Try to bind a native OS voice matching the detected language
+        // Try to bind a native OS voice matching the target language
         const voices = window.speechSynthesis.getVoices();
-        const preferredVoice = voices.find(v => v.lang.startsWith(utterance.lang) || v.lang.startsWith(utterance.lang.split('-')[0]));
+        const preferredVoice = voices.find(v => v.lang === targetLang || v.lang.startsWith(targetLang) || v.lang.startsWith(targetLang.split('-')[0]));
         if (preferredVoice) {
             utterance.voice = preferredVoice;
         }
