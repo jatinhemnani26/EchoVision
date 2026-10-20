@@ -1,11 +1,14 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
+from collections import defaultdict
 import uvicorn
 import cv2
 import base64
 import numpy as np
+import time
+import os
 from typing import Optional
 
 from vision.camera import CameraManager
@@ -16,18 +19,77 @@ from vision.cloud_brain import CloudMultimodalEngine
 
 app = FastAPI(
     title="EchoVision Core API",
-    description="Local OpenCV Vision Processing, 2-Tier Triage & Alexa MCP Bridge",
+    description="Local OpenCV Vision Processing, 2-Tier Triage and Alexa MCP Bridge",
     version="1.0.0"
 )
 
-# Enable CORS for the local frontend (http://localhost:3000)
+# CORS: Restricted to official frontend domains and local development
+ALLOWED_ORIGINS = [
+    "https://echovision45.vercel.app",
+    "https://echovision-theta.vercel.app",
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+    "http://localhost:8000",
+    "http://127.0.0.1:8000",
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=ALLOWED_ORIGINS,
+    allow_origin_regex=r"https://.*\.vercel\.app",
     allow_credentials=True,
-    allow_methods=["*"],
+    allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["*"],
 )
+
+# ==============================================================================
+# Token & API Quota Protection (Anti-Abuse Layer)
+# ==============================================================================
+MAX_REQUESTS_PER_MIN_PER_IP = 20
+GLOBAL_HOURLY_CLOUD_LIMIT = 100  # Strict hourly ceiling on NVIDIA VLM calls
+
+ip_request_history = defaultdict(list)
+global_cloud_history = []
+
+def check_ip_rate_limit(client_ip: str):
+    """Enforces max 20 requests per minute per IP address."""
+    now = time.time()
+    ip_request_history[client_ip] = [t for t in ip_request_history[client_ip] if now - t < 60]
+    if len(ip_request_history[client_ip]) >= MAX_REQUESTS_PER_MIN_PER_IP:
+        raise HTTPException(
+            status_code=429,
+            detail="Rate limit exceeded. Maximum 20 requests per minute allowed per IP."
+        )
+    ip_request_history[client_ip].append(now)
+
+def check_global_cloud_quota():
+    """Circuit breaker: caps total NVIDIA VLM inferences across all clients per hour."""
+    global global_cloud_history
+    now = time.time()
+    global_cloud_history = [t for t in global_cloud_history if now - t < 3600]
+    if len(global_cloud_history) >= GLOBAL_HOURLY_CLOUD_LIMIT:
+        raise HTTPException(
+            status_code=429,
+            detail="Public demo hourly cloud quota reached. Please try again shortly."
+        )
+    global_cloud_history.append(now)
+
+def verify_client_origin(request: Request):
+    """Validates that requests come from the legitimate frontend client."""
+    client_header = request.headers.get("x-echo-client")
+    origin = request.headers.get("origin", "")
+    referer = request.headers.get("referer", "")
+    
+    trusted_patterns = ["echovision45.vercel.app", "echovision-theta.vercel.app", "localhost", "127.0.0.1"]
+    matches_origin = any(pattern in origin or pattern in referer for pattern in trusted_patterns)
+    
+    if client_header == "echovision-web-client" or matches_origin:
+        return True
+    
+    raise HTTPException(
+        status_code=403,
+        detail="Access denied. Requests must originate from the official EchoVision application."
+    )
 
 # Initialize Core Services
 camera_manager = CameraManager(camera_index=0)
@@ -37,7 +99,6 @@ cloud_brain = CloudMultimodalEngine()
 stream_active = False
 
 # Pre-cache fallback image in memory for sub-second Alexa responses on cloud hosts
-import os
 CACHED_FALLBACK_B64 = None
 for _fp in ["debug_raw.jpg", "debug_enhanced.jpg"]:
     if os.path.exists(_fp):
@@ -55,7 +116,11 @@ class SyncFrameRequest(BaseModel):
     image_base64: str
 
 @app.post("/api/v1/vision/sync_frame")
-def sync_live_frame(req: SyncFrameRequest):
+def sync_live_frame(req: SyncFrameRequest, request: Request):
+    client_ip = request.client.host if request.client else "unknown"
+    verify_client_origin(request)
+    check_ip_rate_limit(client_ip)
+
     global LATEST_LIVE_FRAME_B64
     clean_b64 = req.image_base64
     if "," in clean_b64:
@@ -73,8 +138,6 @@ class AnalyzeRequest(BaseModel):
 
 @app.on_event("startup")
 def startup_event():
-    # Do NOT keep camera on at startup - stay privacy-first and battery friendly!
-    # Camera activates strictly on-demand or when user toggles stream ON.
     pass
 
 
@@ -105,9 +168,6 @@ def health_check():
     }
 
 
-from fastapi.responses import StreamingResponse
-import time
-
 def generate_frames(cam_index: int = 0):
     """Generator for MJPEG stream from the local hardware."""
     global stream_active
@@ -125,14 +185,13 @@ def generate_frames(cam_index: int = 0):
                 time.sleep(0.05)
                 continue
                 
-            # Compress for stream speed (Restored fast 1080p stream without blocking OpenCV overlays)
             _, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 70])
             yield (b'--frame\r\n'
                    b'Content-Type: image/jpeg\r\n\r\n' + buffer.tobytes() + b'\r\n')
     finally:
-        # Client disconnected or toggled off -> shut off camera hardware completely
         stream_active = False
         camera_manager.release()
+
 
 @app.post("/api/v1/alexa")
 async def alexa_webhook(req: dict):
@@ -143,28 +202,24 @@ async def alexa_webhook(req: dict):
     """
     request_type = req.get("request", {}).get("type")
     
-    # Handle Alexa Skill launch or Intent
     if request_type in ("LaunchRequest", "IntentRequest"):
         base64_image = None
 
-        # Priority 1: Real-time frame streamed live from the user's browser/phone camera!
         if LATEST_LIVE_FRAME_B64:
             base64_image = LATEST_LIVE_FRAME_B64
-        # Priority 2: If running locally on hardware with an already active camera
         elif camera_manager.capture and camera_manager.capture.isOpened():
             frame = camera_manager.get_frame()
             if frame is not None:
                 _, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 75])
                 base64_image = base64.b64encode(buffer).decode('utf-8')
 
-        # Priority 3: Fallback demo scene if camera is not active yet
         if not base64_image:
             base64_image = CACHED_FALLBACK_B64
 
         if not base64_image:
             spoken_text = "EchoVision vision sensor is active. All surroundings appear clear and illuminated."
         else:
-            # Concise 1-sentence prompt + max_tokens=60 for guaranteed <2s response time!
+            check_global_cloud_quota()
             prompt = "In 1 concise sentence suitable for voice playback, describe the primary object or scene in front of the camera."
             cloud_result = cloud_brain.analyze_image(base64_image, prompt, max_tokens=60)
             if cloud_result.get("success"):
@@ -172,7 +227,6 @@ async def alexa_webhook(req: dict):
             else:
                 spoken_text = "EchoVision optical sensor is online. Surroundings appear clear."
 
-        # Return official Alexa JSON Format
         return {
             "version": "1.0",
             "response": {
@@ -193,13 +247,17 @@ def video_feed(cam_index: int = 0):
 
 
 @app.post("/api/v1/vision/analyze")
-def analyze_scene(req: AnalyzeRequest):
+def analyze_scene(req: AnalyzeRequest, request: Request):
     """
-    Core 2-Tier Triage Pipeline:
-    1. If client sent an image from browser camera (image_base64), decode it directly.
-    2. Otherwise, grabs live frame from hardware (starting camera on-demand if needed).
-    3. Runs local OCR + NVIDIA VLM analysis.
+    Core 2-Tier Triage Pipeline with Token & Abuse Protection:
+    1. Authenticates request origin and client token.
+    2. Enforces IP rate limits and global cloud circuit breaker.
+    3. Runs local OCR triage first ($0.00). If spatial/unclear -> NVIDIA NIM VLM.
     """
+    client_ip = request.client.host if request.client else "unknown"
+    verify_client_origin(request)
+    check_ip_rate_limit(client_ip)
+
     frame = None
     if req.image_base64:
         try:
@@ -221,7 +279,6 @@ def analyze_scene(req: AnalyzeRequest):
 
         frame = camera_manager.get_frame()
 
-        # Power down camera sensor immediately if user hasn't enabled continuous live feed
         if not was_streaming:
             camera_manager.release()
 
@@ -235,8 +292,6 @@ def analyze_scene(req: AnalyzeRequest):
     routing_decision = vision_router.evaluate_frame(ocr_preprocessed, user_intent=req.intent)
 
     # Step 3: For the Cloud Brain (NVIDIA VLM), use the full natural COLOR frame!
-    # VLMs need true RGB colors, textures, and lighting to read text and identify objects.
-    # Using 85 Quality to keep payload size reasonable while keeping 1080p resolution
     _, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
     base64_image = base64.b64encode(buffer).decode('utf-8')
 
@@ -249,12 +304,11 @@ def analyze_scene(req: AnalyzeRequest):
         }
     }
 
-    # Only include full base64 image data and call cloud if needed
     if routing_decision["needs_cloud"]:
+        check_global_cloud_quota()
         response_payload["cloud_payload"] = {
             "image_format": "jpeg"
         }
-        # Run Phase 3: The NVIDIA Cloud Brain on the REAL COLOR frame
         cloud_result = cloud_brain.analyze_image(base64_image, req.intent, lang=req.lang)
         response_payload["cloud_analysis"] = cloud_result
 
@@ -262,8 +316,9 @@ def analyze_scene(req: AnalyzeRequest):
 
 
 @app.get("/api/v1/vision/ocr")
-def read_text_direct():
+def read_text_direct(request: Request):
     """Direct local OCR execution on current frame."""
+    verify_client_origin(request)
     frame = camera_manager.get_frame()
     if frame is None:
         raise HTTPException(status_code=500, detail="Failed to capture frame.")

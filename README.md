@@ -51,8 +51,8 @@ Not a classification tag. Not a JSON blob. A real, human sentence. In English, H
 │  ┌───────────────┐    ┌──────────────────────────────┐  │
 │  │ Frame Buffer  │    │     2-Tier Triage Router      │  │
 │  │ (in-memory,   │    │                              │  │
-│  │  refreshed    │    │  "read this label" ──► OCR   │  │
-│  │  every 3s)    │    │   (Tesseract, $0.00)         │  │
+│  │  refreshed    │    │  "read label" ──► Edge OCR   │  │
+│  │  every 3s)    │    │   (Local Tesseract triage)   │  │
 │  │               │    │                              │  │
 │  │  Alexa reads  │    │  "what's in front of me"     │  │
 │  │  latest frame │    │   ──► NVIDIA NIM Cloud Brain │  │
@@ -68,7 +68,7 @@ Not a classification tag. Not a JSON blob. A real, human sentence. In English, H
    └─────────────┘
 ```
 
-**The key insight:** not every question needs a GPU. "Read this nutrition label" is just OCR — runs on-device, costs nothing. "Describe what's happening in this room" needs spatial reasoning — that goes to NVIDIA NIM. The router decides in <5ms. In testing, **~40% of queries resolve at zero cost**.
+**The key insight (2-Tier Architecture):** Not every visual question needs an expensive cloud GPU. The architecture features an intelligent **2-Tier Triage Router**: text/label reading queries can resolve on local edge OCR (Tesseract at $0.00 cost when available on local/edge hardware), while complex spatial reasoning, room navigation, and scene understanding route dynamically to the NVIDIA NIM Cloud Brain (Llama 3.2 11B Vision). In local edge setups, this cuts cloud inference calls by ~40%, while cloud-hosted instances fail-safe to NVIDIA NIM.
 
 ---
 
@@ -80,7 +80,7 @@ Not a classification tag. Not a JSON blob. A real, human sentence. In English, H
 | **Voice** | Tap a button, wait | "Alexa, ask smart vision…" (hands-free, eyes-free) |
 | **Speed** | 5-10 seconds | Sub-2 seconds end-to-end |
 | **Languages** | English only | Native Hindi (देवनागरी), Spanish, French, English |
-| **Cost/query** | $0.003+ for everything | $0.00 for ~40% of queries (OCR triage) |
+| **Cost Strategy** | $0.003+ for every single frame | 2-Tier Triage: Edge OCR triage + Cloud NIM VLM |
 | **Install** | App Store / Play Store | Works on a $50 phone's browser from 2019 |
 
 ---
@@ -93,7 +93,7 @@ Not a classification tag. Not a JSON blob. A real, human sentence. In English, H
 | **Camera** | WebRTC `getUserMedia` | Native browser API, no plugins, back-camera preference on mobile |
 | **Backend** | Python 3.11 + FastAPI | Async, lightweight, fits in 512MB free tier |
 | **Vision AI** | NVIDIA NIM → Llama 3.2 11B Vision Instruct | OpenAI-compatible API, sub-second multimodal inference |
-| **Edge OCR** | Tesseract (pytesseract) | Free, offline, handles text-heavy queries without cloud calls |
+| **Edge OCR** | Tesseract (pytesseract) | Local fallback for text queries without cloud overhead |
 | **Voice** | Amazon Alexa Custom Skill | 500M+ devices worldwide, true hands-free interaction |
 | **TTS** | Web Speech API | Built into every modern browser, 30+ languages |
 | **Frontend Host** | Vercel | Auto-deploy on push, global CDN, SSL included |
@@ -110,7 +110,7 @@ EchoVision/
 │   └── netflix-intro.mp3   # Splash screen empathy reveal audio
 │
 ├── backend/
-│   ├── main.py             # FastAPI app — /analyze, /alexa, /sync_frame endpoints
+│   ├── main.py             # FastAPI app — /analyze, /alexa, /sync_frame + rate limiter
 │   ├── requirements.txt    # Lean deps (no PyTorch, no bloat)
 │   ├── runtime.txt         # Python 3.11.9 pinned for Render
 │   └── vision/
@@ -131,7 +131,7 @@ EchoVision/
 ### Prerequisites
 - Python 3.11+
 - An [NVIDIA NIM API key](https://build.nvidia.com/) (free developer tier available)
-- (Optional) [Tesseract OCR](https://github.com/tesseract-ocr/tesseract) installed locally
+- (Optional) [Tesseract OCR](https://github.com/tesseract-ocr/tesseract) installed locally for local edge mode
 
 ### 1. Clone & Setup Backend
 
@@ -173,14 +173,16 @@ The frontend auto-detects local vs production and switches the API URL according
 
 ---
 
-## API Endpoints
+## API Endpoints & Security
 
 | Method | Endpoint | What It Does |
 |--------|----------|-------------|
-| `GET` | `/health` | Health check — returns `{"status": "healthy"}` |
-| `POST` | `/api/v1/vision/analyze` | Send `image_base64` + `intent` + `language` → get scene description |
-| `POST` | `/api/v1/vision/sync_frame` | Browser pushes live camera frame (called every 3s automatically) |
-| `POST` | `/api/v1/alexa` | Alexa webhook — grabs latest synced frame, describes it, returns Alexa JSON |
+| `GET` | `/health` | Health check — returns service and sensor status |
+| `POST` | `/api/v1/vision/analyze` | Client-authenticated frame analysis via 2-Tier router & NVIDIA NIM |
+| `POST` | `/api/v1/vision/sync_frame` | Browser pushes live camera frame buffer (called every 3s automatically) |
+| `POST` | `/api/v1/alexa` | Alexa webhook — reads latest live frame, describes it, returns Alexa JSON |
+
+> **🛡️ Built-in Token & Quota Protection:** The backend enforces per-IP sliding-window rate limits (max 20 req/min) and a global hourly circuit breaker, preventing token exhaustion and bot spam while keeping the public demo fast and accessible.
 
 ---
 
@@ -191,6 +193,8 @@ We're not going to pretend this was smooth. Some highlights:
 **⏱️ The 8.3-Second Wall** — Our first Alexa integration took 8.3 seconds. Alexa's timeout is 8.0. We heard *"The requested skill did not provide a valid response"* approximately 400 times. The fix: kill the hardware camera scan (2s saved), cap `max_tokens` at 60 (1.5s saved), and pre-cache fallback frames in memory. Final: **1.7 seconds**.
 
 **📦 The 2.5GB Ghost** — We had `easyocr` in `requirements.txt` from an early experiment. Never imported it. Never used it. But it pulled in PyTorch + CUDA — 2.5 gigabytes. We only noticed when Render's 512MB RAM started killing builds.
+
+**⚙️ Headless Cloud Architecture** — While our 2-Tier Router natively supports local OCR on edge machines with Tesseract binaries, our lightweight cloud backend runs in a 512MB headless container without binary OCR bloat, seamlessly routing spatial visual queries directly to NVIDIA NIM with sub-2s response times.
 
 **🐍 Python 3.14 Surprise** — Render defaults to Python 3.14. Our OpenAI SDK doesn't support it. 47 lines of compilation errors. Fix: pin `3.11.9` in three separate files and pray.
 

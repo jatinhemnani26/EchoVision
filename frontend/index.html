@@ -1106,7 +1106,7 @@
 
         const response = await fetch(`${API_BASE_URL}/api/v1/vision/analyze`, {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
+            headers: { "Content-Type": "application/json", "X-Echo-Client": "echovision-web-client" },
             body: JSON.stringify(payload)
         });
         
@@ -1313,8 +1313,8 @@
           ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
           const b64 = canvas.toDataURL('image/jpeg', 0.7);
           fetch(`${API_BASE_URL}/api/v1/vision/sync_frame`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            method: "POST",
+            headers: { "Content-Type": "application/json", "X-Echo-Client": "echovision-web-client" },
             body: JSON.stringify({ image_base64: b64 })
           }).catch(() => {});
         } catch(e) {}
