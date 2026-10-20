@@ -1170,26 +1170,37 @@
       playSonarPing(880, 0);
 
       const statusText = document.getElementById('metaStatus');
-      statusText.innerText = 'Perceiving Live Frame (1080p)...';
+      statusText.innerText = 'Perceiving Live Frame (1080p Viewfinder)...';
 
       // Auto-start camera viewfinder if not already active
       if (!camOn) {
         await toggleLensFeed();
       }
 
-      // 1080p Capture with High-Fidelity JPEG Compression (~180KB-220KB)
-      let browserFrameB64 = null;
+      // Ensure camera video track has initialized active pixels
       const video = document.getElementById('liveWebcam');
+      if (video && video.videoWidth === 0) {
+        for (let i = 0; i < 10; i++) {
+          await new Promise(r => setTimeout(r, 100));
+          if (video.videoWidth > 0) break;
+        }
+      }
+
+      // Capture single-tile optimal resolution (768px max dim)
+      // Viewfinder stays full 1080p @ 60FPS, but VLM token count drops by 5x (sub-second inference!)
+      let browserFrameB64 = null;
       if (video && video.videoWidth > 0) {
         try {
           const canvas = document.createElement('canvas');
-          canvas.width = video.videoWidth || 1920;
-          canvas.height = video.videoHeight || 1080;
+          const maxDim = 768;
+          const scale = Math.min(1, maxDim / Math.max(video.videoWidth, video.videoHeight));
+          canvas.width = Math.round(video.videoWidth * scale);
+          canvas.height = Math.round(video.videoHeight * scale);
           const ctx = canvas.getContext('2d');
           ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-          browserFrameB64 = canvas.toDataURL('image/jpeg', 0.75);
+          browserFrameB64 = canvas.toDataURL('image/jpeg', 0.80);
         } catch(e) {
-          console.warn("Could not capture 1080p frame from canvas:", e);
+          console.warn("Could not capture frame from canvas:", e);
         }
       }
 
@@ -1221,7 +1232,7 @@
 
         if (response.ok && response.body) {
           streamSucceeded = true;
-          statusText.innerText = 'Streaming Perception...';
+          statusText.innerText = 'Perceiving Scene...';
           document.getElementById('heroTitle').innerHTML = `Visual Context<br>Perceived`;
 
           const reader = response.body.getReader();
@@ -1253,23 +1264,30 @@
                 accumulatedText += token;
                 phraseBuffer += token;
 
-                // Live dynamic UI update
+                // Live dynamic UI text update (instantaneous streaming display)
                 document.getElementById('heroDetail').innerText = accumulatedText;
 
-                // Chunked Speech: Trigger speech on punctuation or 4+ words
-                const wordCount = phraseBuffer.trim().split(/\s+/).length;
-                const hasPunctuation = /[,;:.!?]/.test(phraseBuffer);
+                // Continuous Natural Speech:
+                // Only speak at complete sentence boundaries (. ! ? । ;) or when phrase is fully formed.
+                // This eliminates the robotic pause/stop-and-go stutter and provides fluent, human cadence!
+                const sentenceEndRegex = /[.!?\u0964;\n]/;
+                if (sentenceEndRegex.test(phraseBuffer)) {
+                  const lastIdx = Math.max(
+                    phraseBuffer.lastIndexOf('.'),
+                    phraseBuffer.lastIndexOf('!'),
+                    phraseBuffer.lastIndexOf('?'),
+                    phraseBuffer.lastIndexOf('\u0964'),
+                    phraseBuffer.lastIndexOf(';')
+                  );
+                  const sentenceToSpeak = phraseBuffer.slice(0, lastIdx + 1).trim();
+                  phraseBuffer = phraseBuffer.slice(lastIdx + 1);
 
-                if ((hasPunctuation && wordCount >= 2) || wordCount >= 5) {
-                  const phraseToSpeak = phraseBuffer.trim();
-                  if (phraseToSpeak.length > 0) {
+                  if (sentenceToSpeak.length > 0) {
                     if (!firstChunkSpoken) {
                       const ttfs = Math.round(performance.now() - startTime);
-                      console.log(`[EchoVision] TTFS (Time-to-First-Speech): ${ttfs}ms`);
-                      statusText.innerText = `Speaking (${ttfs}ms TTFS)`;
+                      statusText.innerText = `Speaking (${ttfs}ms)`;
                       firstChunkSpoken = true;
 
-                      // Lift empathy blur on first words
                       const empathyOverlay = document.getElementById('empathyOverlay');
                       if (empathyOverlay && empathyOverlay.classList.contains('active')) {
                         empathyOverlay.classList.remove('active');
@@ -1279,8 +1297,7 @@
                         if (btnText) btnText.innerText = 'Low Vision Filter: OFF';
                       }
                     }
-                    speakSpatialPhrase(phraseToSpeak, selectedLang);
-                    phraseBuffer = "";
+                    speakSpatialPhrase(sentenceToSpeak, selectedLang);
                   }
                 }
               } catch(e) {
@@ -1289,12 +1306,11 @@
             }
           }
 
-          // Flush any final remaining tokens in phraseBuffer
+          // Flush any final remaining tokens in phraseBuffer upon stream completion
           if (phraseBuffer.trim().length > 0) {
             if (!firstChunkSpoken) {
               const ttfs = Math.round(performance.now() - startTime);
-              console.log(`[EchoVision] TTFS: ${ttfs}ms`);
-              statusText.innerText = `Speaking (${ttfs}ms TTFS)`;
+              statusText.innerText = `Speaking (${ttfs}ms)`;
               firstChunkSpoken = true;
             }
             speakSpatialPhrase(phraseBuffer.trim(), selectedLang);
@@ -1355,11 +1371,11 @@
     let isListening = false;
     let micTimeout = null;
 
-    function toggleVoiceInteraction() {
+    async function toggleVoiceInteraction() {
         if (isListening) {
             stopVoiceInteraction();
         } else {
-            startVoiceInteraction();
+            await startVoiceInteraction();
         }
     }
 
@@ -1393,7 +1409,7 @@
         }
     }
 
-    function startVoiceInteraction() {
+    async function startVoiceInteraction() {
         const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
         if (!SpeechRecognition) {
             alert("Voice recognition not supported in this browser. Please use Chrome or Edge.");
@@ -1404,7 +1420,7 @@
 
         // Auto-turn on camera feed and expand viewfinder so the AI can perceive objects!
         if (!camOn) {
-            toggleLensFeed();
+            await toggleLensFeed();
         }
 
         const recognition = new SpeechRecognition();

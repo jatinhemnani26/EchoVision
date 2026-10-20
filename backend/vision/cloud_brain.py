@@ -49,31 +49,41 @@ class CloudMultimodalEngine:
     def _build_dense_prompt(self, intent: str, lang: str = "en-US") -> str:
         """
         High-Density Spatial Anchor Prompt:
-        Eliminates conversational filler ('I can see', 'In the image').
-        Forces immediate, telegraphic spatial positioning for sub-second inference.
+        Eliminates conversational filler and Meta safety false-positives.
+        Forces direct spatial positioning and exact object details for assistive audio navigation.
         """
         if lang == "hi-IN":
-            lang_rules = (
-                "LANGUAGE MANDATE: You MUST reply in HINDI using standard DEVANAGARI SCRIPT (हिन्दी लिपि). "
-                "Example: 'सफेद माउस मेज पर दाईं ओर रखा है।' "
-                "DO NOT use Latin/English alphabet (no Hinglish). Write ONLY in pure Devanagari Hindi."
+            return (
+                "You are EchoVision, an ultra-fast assistive vision engine for a visually impaired user.\n"
+                "CRITICAL MANDATE: Output MUST be in natural, fluent Hindi using standard Devanagari script (हिन्दी भाषा, देवनागरी लिपि). "
+                "DO NOT use Latin/English letters.\n"
+                f"User asks: '{intent}'.\n"
+                "Directly describe the primary object or person, their exact spatial position (e.g. बाईं ओर, दाईं ओर, मेज पर, सामने), "
+                "and the surroundings in 1 concise, natural Hindi sentence (e.g. 'सामने एक मेज पर लैपटॉप और दाईं ओर पानी की बोतल रखी है।'). "
+                "If text or a label is visible, read it verbatim."
             )
         elif lang == "es-ES":
-            lang_rules = "LANGUAGE MANDATE: You MUST reply completely in SPANISH (Español). Do not speak English."
+            return (
+                "You are EchoVision, an ultra-fast assistive vision engine for a visually impaired user.\n"
+                "CRITICAL MANDATE: Reply strictly in Spanish (Español).\n"
+                f"User asks: '{intent}'.\n"
+                "Directly state the primary object, its exact color and spatial position relative to the user in 1 concise, natural sentence."
+            )
         elif lang == "fr-FR":
-            lang_rules = "LANGUAGE MANDATE: You MUST reply completely in FRENCH (Français). Do not speak English."
+            return (
+                "You are EchoVision, an ultra-fast assistive vision engine for a visually impaired user.\n"
+                "CRITICAL MANDATE: Reply strictly in French (Français).\n"
+                f"User asks: '{intent}'.\n"
+                "Directly state the primary object, its exact color and spatial position relative to the user in 1 concise, natural sentence."
+            )
         else:
-            lang_rules = "LANGUAGE MANDATE: Reply in crisp, natural English."
-
-        return (
-            f"You are EchoVision, an ultra-fast spatial vision engine for a visually impaired user.\n"
-            f"{lang_rules}\n"
-            f"User asks: '{intent}'.\n"
-            f"SPATIAL DENSITY MANDATE: Zero filler words. Do NOT say 'I see', 'The image shows', or 'There is'.\n"
-            f"Directly state: [Primary object + exact color/condition] at [Exact position/distance relative to user/surface], [Key background item or text].\n"
-            f"Limit strictly to 12 to 18 high-density, spatial words for real-time speech synthesis.\n"
-            f"{lang_rules}"
-        )
+            return (
+                "You are EchoVision, an ultra-fast assistive spatial vision engine for a visually impaired user.\n"
+                f"User asks: '{intent}'.\n"
+                "Directly describe the primary object or person, their exact spatial position (e.g. 'on your left', 'in front of you on the desk', 'in your hand'), "
+                "and surroundings in 1 concise, natural sentence for voice navigation. If text or a label is visible, read it verbatim. "
+                "Zero conversational fluff (do NOT say 'I see' or 'This image shows')."
+            )
 
     def analyze_image(
         self,

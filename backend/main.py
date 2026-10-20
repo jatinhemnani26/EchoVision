@@ -353,16 +353,24 @@ def analyze_scene_stream(req: AnalyzeRequest, request: Request):
     elif LATEST_LIVE_FRAME_B64:
         clean_b64 = LATEST_LIVE_FRAME_B64
     else:
-        # Fallback to hardware camera if no client frame sent
+        # Check if local hardware webcam is available
         frame = camera_manager.get_frame()
         if frame is not None:
             _, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 75])
             clean_b64 = base64.b64encode(buffer).decode('utf-8')
-        elif CACHED_FALLBACK_B64:
-            clean_b64 = CACHED_FALLBACK_B64
 
     if not clean_b64:
-        raise HTTPException(status_code=400, detail="No visual frame provided or captured.")
+        def missing_cam_stream():
+            msg = "Camera lens is initializing. Please point your camera forward."
+            if req.lang == "hi-IN":
+                msg = "कैमरा लेंस शुरू हो रहा है। कृपया अपने कैमरे को सामने रखें।"
+            elif req.lang == "es-ES":
+                msg = "El lente se está iniciando. Por favor apunte la cámara hacia adelante."
+            elif req.lang == "fr-FR":
+                msg = "La caméra démarre. Veuillez orienter votre objectif vers la scène."
+            yield f"data: {json.dumps({'token': msg})}\n\n"
+            yield "data: [DONE]\n\n"
+        return StreamingResponse(missing_cam_stream(), media_type="text/event-stream")
 
     def event_stream():
         try:
