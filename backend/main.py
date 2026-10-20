@@ -8,6 +8,7 @@ import cv2
 import base64
 import numpy as np
 import time
+import json
 import os
 from typing import Optional
 
@@ -221,7 +222,7 @@ async def alexa_webhook(req: dict):
         else:
             check_global_cloud_quota()
             prompt = "In 1 concise sentence suitable for voice playback, describe the primary object or scene in front of the camera."
-            cloud_result = cloud_brain.analyze_image(base64_image, prompt, max_tokens=60)
+            cloud_result = cloud_brain.analyze_image(base64_image, prompt, max_tokens=45)
             if cloud_result.get("success"):
                 spoken_text = cloud_result["description"]
             else:
@@ -322,12 +323,72 @@ def analyze_scene(req: AnalyzeRequest, request: Request):
             base64_image,
             req.intent,
             lang=req.lang,
-            max_tokens=60,
+            max_tokens=45,
             ocr_fallback_text=ocr_text
         )
         response_payload["cloud_analysis"] = cloud_result
 
     return JSONResponse(content=response_payload)
+
+
+@app.post("/api/v1/vision/analyze/stream")
+def analyze_scene_stream(req: AnalyzeRequest, request: Request):
+    """
+    Sub-1-Second Streaming Vision Pipeline (SSE + Zero-Decode Fast Path):
+    1. Authenticates client and applies IP rate limit / circuit breaker.
+    2. Zero-Decode Fast Path: Direct feed of 1080p JPEG base64 to NVIDIA NIM,
+       completely avoiding OpenCV decode & encode CPU bottlenecks on Render.
+    3. Streams SSE delta tokens with X-Accel-Buffering: no for instant chunk delivery.
+    """
+    client_ip = request.client.host if request.client else "unknown"
+    verify_client_origin(request)
+    check_ip_rate_limit(client_ip)
+    check_global_cloud_quota()
+
+    clean_b64 = None
+    if req.image_base64:
+        clean_b64 = req.image_base64
+        if "," in clean_b64:
+            clean_b64 = clean_b64.split(",")[1]
+    elif LATEST_LIVE_FRAME_B64:
+        clean_b64 = LATEST_LIVE_FRAME_B64
+    else:
+        # Fallback to hardware camera if no client frame sent
+        frame = camera_manager.get_frame()
+        if frame is not None:
+            _, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 75])
+            clean_b64 = base64.b64encode(buffer).decode('utf-8')
+        elif CACHED_FALLBACK_B64:
+            clean_b64 = CACHED_FALLBACK_B64
+
+    if not clean_b64:
+        raise HTTPException(status_code=400, detail="No visual frame provided or captured.")
+
+    def event_stream():
+        try:
+            for token in cloud_brain.stream_image_analysis(
+                clean_b64,
+                req.intent or "general",
+                lang=req.lang or "en-US",
+                max_tokens=45
+            ):
+                payload = json.dumps({"token": token})
+                yield f"data: {payload}\n\n"
+            yield "data: [DONE]\n\n"
+        except Exception as e:
+            err_payload = json.dumps({"token": "Visual perception active.", "error": str(e)})
+            yield f"data: {err_payload}\n\n"
+            yield "data: [DONE]\n\n"
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no"
+        }
+    )
 
 
 @app.get("/api/v1/vision/ocr")

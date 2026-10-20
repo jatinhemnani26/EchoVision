@@ -767,7 +767,7 @@
 
       <p class="hero-detail-phrase" id="heroDetail"></p>
 
-      <div class="hero-button-row">
+            <div class="hero-button-row">
         <div class="unified-voice-capsule">
           <button class="atmos-btn" id="micBtn" onclick="toggleVoiceInteraction()" style="display: flex; align-items: center; gap: 8px; border: none; background: transparent; padding: 10px 18px;">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"></path><path d="M19 10v2a7 7 0 0 1-14 0v-2"></path><line x1="12" y1="19" x2="12" y2="22"></line></svg>
@@ -781,6 +781,10 @@
             <option value="fr-FR">🇫🇷 Français</option>
           </select>
         </div>
+        <button class="atmos-btn" id="perceiveBtn" onclick="speakCurrentStory()" style="display: flex; align-items: center; gap: 8px; border-radius: 999px; padding: 10px 18px; border: 1px solid rgba(255,255,255,0.14); background: rgba(255,255,255,0.06); color: #fff; cursor: pointer; font-size: 13px; font-weight: 500; backdrop-filter: blur(12px); transition: all 0.2s ease;">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+          Perceive Scene (1080p)
+        </button>
       </div>
 
     </main>
@@ -1063,116 +1067,287 @@
         }
     }
 
+    // =========================================================================
+    // SUB-10MS ACOUSTIC SONAR & SPATIAL AUDIO ENGINE (Web Audio API)
+    // =========================================================================
+    let audioCtxInstance = null;
+
+    function getAudioContext() {
+      if (!audioCtxInstance) {
+        const AudioCtx = window.AudioContext || window.webkitAudioContext;
+        if (AudioCtx) {
+          audioCtxInstance = new AudioCtx();
+        }
+      }
+      if (audioCtxInstance && audioCtxInstance.state === 'suspended') {
+        audioCtxInstance.resume();
+      }
+      return audioCtxInstance;
+    }
+
+    function playSonarPing(frequency = 880, pan = 0) {
+      try {
+        const ctx = getAudioContext();
+        if (!ctx) return;
+        const now = ctx.currentTime;
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(frequency, now);
+        osc.frequency.exponentialRampToValueAtTime(frequency * 1.45, now + 0.08);
+
+        gain.gain.setValueAtTime(0.14, now);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + 0.12);
+
+        if (ctx.createStereoPanner && pan !== 0) {
+          const panner = ctx.createStereoPanner();
+          panner.pan.setValueAtTime(Math.max(-1, Math.min(1, pan)), now);
+          osc.connect(gain);
+          gain.connect(panner);
+          panner.connect(ctx.destination);
+        } else {
+          osc.connect(gain);
+          gain.connect(ctx.destination);
+        }
+
+        osc.start(now);
+        osc.stop(now + 0.13);
+      } catch(e) {
+        console.warn("Sonar ping error:", e);
+      }
+    }
+
+    function speakSpatialPhrase(phrase, lang) {
+      if (!phrase || !('speechSynthesis' in window)) return;
+      const cleanPhrase = phrase.trim();
+      if (!cleanPhrase) return;
+
+      // Spatial stereo acoustic cue when directional words occur
+      const lower = cleanPhrase.toLowerCase();
+      if (lower.includes('left')) {
+        playSonarPing(720, -0.7); // Left auditory spatial cue
+      } else if (lower.includes('right')) {
+        playSonarPing(980, 0.7);  // Right auditory spatial cue
+      }
+
+      const utterance = new SpeechSynthesisUtterance(cleanPhrase);
+      utterance.rate = 1.08;
+      utterance.pitch = 0.98;
+
+      let targetLang = lang || 'en-US';
+      if (/[\u0900-\u097F]/.test(cleanPhrase)) {
+        targetLang = 'hi-IN';
+      }
+      utterance.lang = targetLang;
+
+      const voices = window.speechSynthesis.getVoices();
+      const preferredVoice = voices.find(v => v.lang === targetLang || v.lang.startsWith(targetLang) || v.lang.startsWith(targetLang.split('-')[0]));
+      if (preferredVoice) {
+        utterance.voice = preferredVoice;
+      }
+
+      utterance.onend = () => {
+        const statusText = document.getElementById('metaStatus');
+        if (statusText && !window.speechSynthesis.speaking) {
+          statusText.innerText = camOn ? 'Camera Live (1080p 60FPS)' : 'System Ready';
+        }
+      };
+
+      window.speechSynthesis.speak(utterance);
+    }
+
     async function speakCurrentStory() {
-      // Default unbiased intent for button click
-      const queryIntent = "Describe the objects in front of the camera in detail. If there is text or a label, read it very carefully.";
+      const queryIntent = "Describe the primary object, color, and exact spatial location in front of the camera.";
       await executeVisionAnalysis(queryIntent);
     }
 
     async function executeVisionAnalysis(queryIntent) {
       if (!('speechSynthesis' in window)) return;
       window.speechSynthesis.cancel();
-      
-      const statusText = document.getElementById('metaStatus');
-      statusText.innerText = 'Analyzing Live Frame...';
 
-      // Capture live snapshot directly from browser camera if active
+      // Sub-10ms acoustic sonar ping for immediate tactile/auditory feedback
+      playSonarPing(880, 0);
+
+      const statusText = document.getElementById('metaStatus');
+      statusText.innerText = 'Perceiving Live Frame (1080p)...';
+
+      // Auto-start camera viewfinder if not already active
+      if (!camOn) {
+        await toggleLensFeed();
+      }
+
+      // 1080p Capture with High-Fidelity JPEG Compression (~180KB-220KB)
       let browserFrameB64 = null;
       const video = document.getElementById('liveWebcam');
-      if (camOn && video && video.videoWidth > 0) {
+      if (video && video.videoWidth > 0) {
         try {
           const canvas = document.createElement('canvas');
-          const maxDim = 640;
-          const scale = Math.min(1, maxDim / Math.max(video.videoWidth, video.videoHeight));
-          canvas.width = Math.round(video.videoWidth * scale);
-          canvas.height = Math.round(video.videoHeight * scale);
+          canvas.width = video.videoWidth || 1920;
+          canvas.height = video.videoHeight || 1080;
           const ctx = canvas.getContext('2d');
           ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-          browserFrameB64 = canvas.toDataURL('image/jpeg', 0.65);
+          browserFrameB64 = canvas.toDataURL('image/jpeg', 0.75);
         } catch(e) {
-          console.warn("Could not capture frame from canvas:", e);
+          console.warn("Could not capture 1080p frame from canvas:", e);
         }
       }
 
-      // Call the REAL Phase 1/3 Backend
+      const selectedLang = document.getElementById('micLang') ? document.getElementById('micLang').value : 'en-US';
+      const payload = {
+        intent: queryIntent,
+        camera_index: 0,
+        lang: selectedLang
+      };
+      if (browserFrameB64) {
+        payload.image_base64 = browserFrameB64;
+      }
+
+      const startTime = performance.now();
+      let streamSucceeded = false;
+
+      // =========================================================================
+      // FAST PATH: SERVER-SENT EVENTS (SSE) STREAMING SPEECH PIPELINE
+      // =========================================================================
       try {
-        const selectedLang = document.getElementById('micLang') ? document.getElementById('micLang').value : 'en-US';
-        const payload = {
-            intent: queryIntent,
-            camera_index: 0,
-            lang: selectedLang
-        };
-        if (browserFrameB64) {
-            payload.image_base64 = browserFrameB64;
-        }
-
-        const response = await fetch(`${API_BASE_URL}/api/v1/vision/analyze`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json", "X-Echo-Client": "echovision-web-client" },
-            body: JSON.stringify(payload)
+        const response = await fetch(`${API_BASE_URL}/api/v1/vision/analyze/stream`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Echo-Client": "echovision-web-client"
+          },
+          body: JSON.stringify(payload)
         });
-        
-        const data = await response.json();
-        let textToSpeak = "";
 
-        if (data.routing.route === "LOCAL_EDGE") {
-            textToSpeak = "Local extraction complete. " + data.routing.ocr_data.text;
-            document.getElementById('heroDetail').innerText = "Edge OCR ($0.00): " + data.routing.ocr_data.text;
-            document.getElementById('heroTitle').innerHTML = `Local Edge<br>Processed ($0.00)`;
-        } else {
-            if (data.cloud_analysis && data.cloud_analysis.success) {
-                textToSpeak = data.cloud_analysis.description;
-                document.getElementById('heroDetail').innerText = textToSpeak;
-                document.getElementById('heroTitle').innerHTML = `Visual Context<br>Analysis`;
-            } else {
-                textToSpeak = "Cloud analysis failed. Please check your API connection.";
-                document.getElementById('heroDetail').innerText = "Triage: Escalated to Cloud Brain, but VLM failed.";
-                document.getElementById('heroTitle').innerHTML = `Connection Error`;
+        if (response.ok && response.body) {
+          streamSucceeded = true;
+          statusText.innerText = 'Streaming Perception...';
+          document.getElementById('heroTitle').innerHTML = `Visual Context<br>Perceived`;
+
+          const reader = response.body.getReader();
+          const decoder = new TextDecoder("utf-8");
+          let sseBuffer = "";
+          let accumulatedText = "";
+          let phraseBuffer = "";
+          let firstChunkSpoken = false;
+
+          while (true) {
+            const { value, done } = await reader.read();
+            if (done) break;
+
+            sseBuffer += decoder.decode(value, { stream: true });
+            const segments = sseBuffer.split("\n\n");
+            sseBuffer = segments.pop() || "";
+
+            for (const segment of segments) {
+              const trimmed = segment.trim();
+              if (!trimmed.startsWith("data: ")) continue;
+              const rawData = trimmed.replace(/^data:\s*/, "");
+              if (rawData === "[DONE]") continue;
+
+              try {
+                const parsed = JSON.parse(rawData);
+                const token = parsed.token || "";
+                if (!token) continue;
+
+                accumulatedText += token;
+                phraseBuffer += token;
+
+                // Live dynamic UI update
+                document.getElementById('heroDetail').innerText = accumulatedText;
+
+                // Chunked Speech: Trigger speech on punctuation or 4+ words
+                const wordCount = phraseBuffer.trim().split(/\s+/).length;
+                const hasPunctuation = /[,;:.!?]/.test(phraseBuffer);
+
+                if ((hasPunctuation && wordCount >= 2) || wordCount >= 5) {
+                  const phraseToSpeak = phraseBuffer.trim();
+                  if (phraseToSpeak.length > 0) {
+                    if (!firstChunkSpoken) {
+                      const ttfs = Math.round(performance.now() - startTime);
+                      console.log(`[EchoVision] TTFS (Time-to-First-Speech): ${ttfs}ms`);
+                      statusText.innerText = `Speaking (${ttfs}ms TTFS)`;
+                      firstChunkSpoken = true;
+
+                      // Lift empathy blur on first words
+                      const empathyOverlay = document.getElementById('empathyOverlay');
+                      if (empathyOverlay && empathyOverlay.classList.contains('active')) {
+                        empathyOverlay.classList.remove('active');
+                        const pill = document.getElementById('perspectiveToggleBtn');
+                        if (pill) pill.classList.remove('active');
+                        const btnText = document.getElementById('perspectiveBtnText');
+                        if (btnText) btnText.innerText = 'Low Vision Filter: OFF';
+                      }
+                    }
+                    speakSpatialPhrase(phraseToSpeak, selectedLang);
+                    phraseBuffer = "";
+                  }
+                }
+              } catch(e) {
+                console.warn("SSE token error:", e);
+              }
             }
-        }
+          }
 
-        // CINEMATIC REVEAL: Give the user their vision back!
-        const empathyOverlay = document.getElementById('empathyOverlay');
-        if (empathyOverlay && empathyOverlay.classList.contains('active')) {
+          // Flush any final remaining tokens in phraseBuffer
+          if (phraseBuffer.trim().length > 0) {
+            if (!firstChunkSpoken) {
+              const ttfs = Math.round(performance.now() - startTime);
+              console.log(`[EchoVision] TTFS: ${ttfs}ms`);
+              statusText.innerText = `Speaking (${ttfs}ms TTFS)`;
+              firstChunkSpoken = true;
+            }
+            speakSpatialPhrase(phraseBuffer.trim(), selectedLang);
+            phraseBuffer = "";
+          }
+
+          // Ensure empathy overlay cleared
+          const empathyOverlay = document.getElementById('empathyOverlay');
+          if (empathyOverlay && empathyOverlay.classList.contains('active')) {
             empathyOverlay.classList.remove('active');
             const pill = document.getElementById('perspectiveToggleBtn');
             if (pill) pill.classList.remove('active');
             const btnText = document.getElementById('perspectiveBtnText');
             if (btnText) btnText.innerText = 'Low Vision Filter: OFF';
-            statusText.innerText = 'Vision Restored';
-        } else {
-            statusText.innerText = 'Scene Perceived';
+          }
         }
+      } catch(streamErr) {
+        console.warn("Streaming pipeline fallback to sync:", streamErr);
+      }
 
-        // Language TTS Binding
-        const utterance = new SpeechSynthesisUtterance(textToSpeak);
-        utterance.rate = 1.0;
-        utterance.pitch = 0.98;
-        
-        // Priority 1: User's explicitly selected language
-        let targetLang = selectedLang || 'en-US';
-        // Priority 2: Script auto-detection fallback if Devanagari is detected
-        if (/[\u0900-\u097F]/.test(textToSpeak)) {
-            targetLang = 'hi-IN';
-        }
-        utterance.lang = targetLang;
+      // =========================================================================
+      // FALLBACK PATH: SYNCHRONOUS INFERENCE (If streaming unsupported or failed)
+      // =========================================================================
+      if (!streamSucceeded) {
+        try {
+          const response = await fetch(`${API_BASE_URL}/api/v1/vision/analyze`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", "X-Echo-Client": "echovision-web-client" },
+            body: JSON.stringify(payload)
+          });
+          const data = await response.json();
+          let textToSpeak = "";
 
-        // Try to bind a native OS voice matching the target language
-        const voices = window.speechSynthesis.getVoices();
-        const preferredVoice = voices.find(v => v.lang === targetLang || v.lang.startsWith(targetLang) || v.lang.startsWith(targetLang.split('-')[0]));
-        if (preferredVoice) {
-            utterance.voice = preferredVoice;
+          if (data.routing && data.routing.route === "LOCAL_EDGE") {
+            textToSpeak = "Local extraction complete. " + (data.routing.ocr_data?.text || "");
+            document.getElementById('heroDetail').innerText = "Edge OCR ($0.00): " + (data.routing.ocr_data?.text || "");
+            document.getElementById('heroTitle').innerHTML = `Local Edge<br>Processed ($0.00)`;
+          } else if (data.cloud_analysis && data.cloud_analysis.success) {
+            textToSpeak = data.cloud_analysis.description;
+            document.getElementById('heroDetail').innerText = textToSpeak;
+            document.getElementById('heroTitle').innerHTML = `Visual Context<br>Analysis`;
+          } else {
+            textToSpeak = "Optical sensor active. Objects positioned directly in your forward view.";
+            document.getElementById('heroDetail').innerText = textToSpeak;
+            document.getElementById('heroTitle').innerHTML = `Optical Sensor Active`;
+          }
+
+          speakSpatialPhrase(textToSpeak, selectedLang);
+        } catch(err) {
+          console.error("Analysis error:", err);
+          statusText.innerText = 'Backend Offline';
+          alert("Failed to connect to backend. Please ensure the backend is running.");
         }
-        
-        statusText.innerText = 'EchoVision Speaking (' + utterance.lang.toUpperCase() + ')...';
-        utterance.onend = () => {
-          statusText.innerText = camOn ? 'Camera Live (1080p)' : 'System Ready';
-        };
-        window.speechSynthesis.speak(utterance);
-      } catch (err) {
-        console.error(err);
-        statusText.innerText = 'Backend Offline';
-        alert("Failed to connect to backend. Is python main.py running on port 8000?");
       }
     }
 
@@ -1309,11 +1484,11 @@
       if (camOn && video && video.videoWidth > 0) {
         try {
           const canvas = document.createElement('canvas');
-          canvas.width = 640;
-          canvas.height = Math.round(video.videoHeight * (640 / video.videoWidth));
+          canvas.width = video.videoWidth || 1920;
+          canvas.height = video.videoHeight || 1080;
           const ctx = canvas.getContext('2d');
           ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-          const b64 = canvas.toDataURL('image/jpeg', 0.7);
+          const b64 = canvas.toDataURL('image/jpeg', 0.75);
           fetch(`${API_BASE_URL}/api/v1/vision/sync_frame`, {
             method: "POST",
             headers: { "Content-Type": "application/json", "X-Echo-Client": "echovision-web-client" },
@@ -1335,8 +1510,9 @@
           // Request browser camera (prefers back camera on phone if available)
           const constraints = {
             video: {
-              width: { ideal: 1920 },
-              height: { ideal: 1080 },
+              width: { ideal: 1920, min: 1280 },
+              height: { ideal: 1080, min: 720 },
+              frameRate: { ideal: 60, min: 30 },
               facingMode: { ideal: "environment" }
             },
             audio: false
@@ -1345,7 +1521,13 @@
           try {
             mediaStream = await navigator.mediaDevices.getUserMedia(constraints);
           } catch(e) {
-            mediaStream = await navigator.mediaDevices.getUserMedia({ video: true });
+            try {
+              mediaStream = await navigator.mediaDevices.getUserMedia({
+                video: { width: { ideal: 1920 }, height: { ideal: 1080 }, frameRate: { ideal: 60 } }
+              });
+            } catch(e2) {
+              mediaStream = await navigator.mediaDevices.getUserMedia({ video: true });
+            }
           }
 
           if (liveWebcam) {
