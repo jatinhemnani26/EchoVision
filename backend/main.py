@@ -291,8 +291,16 @@ def analyze_scene(req: AnalyzeRequest, request: Request):
     # Step 2: Evaluate via 2-Tier Cost-Mitigation Router
     routing_decision = vision_router.evaluate_frame(ocr_preprocessed, user_intent=req.intent)
 
-    # Step 3: For the Cloud Brain (NVIDIA VLM), use the full natural COLOR frame!
-    _, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
+    # Step 3: For the Cloud Brain (NVIDIA VLM), downscale to 640px max & 65% quality
+    # This shrinks the payload from 2-3MB down to ~15KB (100x faster network roundtrip!)
+    h, w = frame.shape[:2]
+    if max(w, h) > 640:
+        scale = 640.0 / max(w, h)
+        frame_cloud = cv2.resize(frame, (int(w * scale), int(h * scale)))
+    else:
+        frame_cloud = frame
+
+    _, buffer = cv2.imencode('.jpg', frame_cloud, [cv2.IMWRITE_JPEG_QUALITY, 65])
     base64_image = base64.b64encode(buffer).decode('utf-8')
 
     response_payload = {
@@ -309,7 +317,14 @@ def analyze_scene(req: AnalyzeRequest, request: Request):
         response_payload["cloud_payload"] = {
             "image_format": "jpeg"
         }
-        cloud_result = cloud_brain.analyze_image(base64_image, req.intent, lang=req.lang)
+        ocr_text = routing_decision.get("ocr_data", {}).get("text", "")
+        cloud_result = cloud_brain.analyze_image(
+            base64_image,
+            req.intent,
+            lang=req.lang,
+            max_tokens=60,
+            ocr_fallback_text=ocr_text
+        )
         response_payload["cloud_analysis"] = cloud_result
 
     return JSONResponse(content=response_payload)
