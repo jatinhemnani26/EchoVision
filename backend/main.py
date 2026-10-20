@@ -221,8 +221,8 @@ async def alexa_webhook(req: dict):
             spoken_text = "EchoVision vision sensor is active. All surroundings appear clear and illuminated."
         else:
             check_global_cloud_quota()
-            prompt = "In 1 concise sentence suitable for voice playback, describe the primary object or scene in front of the camera."
-            cloud_result = cloud_brain.analyze_image(base64_image, prompt, max_tokens=45)
+            prompt = "Describe the primary objects, people, spatial layout, and any visible text in front of the camera in 2 clear, helpful sentences for an audio guide."
+            cloud_result = cloud_brain.analyze_image(base64_image, prompt, max_tokens=85)
             if cloud_result.get("success"):
                 spoken_text = cloud_result["description"]
             else:
@@ -323,7 +323,7 @@ def analyze_scene(req: AnalyzeRequest, request: Request):
             base64_image,
             req.intent,
             lang=req.lang,
-            max_tokens=45,
+            max_tokens=90,
             ocr_fallback_text=ocr_text
         )
         response_payload["cloud_analysis"] = cloud_result
@@ -378,7 +378,7 @@ def analyze_scene_stream(req: AnalyzeRequest, request: Request):
                 clean_b64,
                 req.intent or "general",
                 lang=req.lang or "en-US",
-                max_tokens=45
+                max_tokens=90
             ):
                 payload = json.dumps({"token": token})
                 yield f"data: {payload}\n\n"

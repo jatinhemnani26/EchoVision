@@ -1186,19 +1186,18 @@
         }
       }
 
-      // Capture single-tile optimal resolution (768px max dim)
-      // Viewfinder stays full 1080p @ 60FPS, but VLM token count drops by 5x (sub-second inference!)
+      // Capture ultra-sharp 960px high-fidelity frame (maximum detail & text readability while maintaining sub-second inference)
       let browserFrameB64 = null;
       if (video && video.videoWidth > 0) {
         try {
           const canvas = document.createElement('canvas');
-          const maxDim = 768;
+          const maxDim = 960;
           const scale = Math.min(1, maxDim / Math.max(video.videoWidth, video.videoHeight));
           canvas.width = Math.round(video.videoWidth * scale);
           canvas.height = Math.round(video.videoHeight * scale);
           const ctx = canvas.getContext('2d');
           ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-          browserFrameB64 = canvas.toDataURL('image/jpeg', 0.80);
+          browserFrameB64 = canvas.toDataURL('image/jpeg', 0.85);
         } catch(e) {
           console.warn("Could not capture frame from canvas:", e);
         }
@@ -1500,11 +1499,13 @@
       if (camOn && video && video.videoWidth > 0) {
         try {
           const canvas = document.createElement('canvas');
-          canvas.width = video.videoWidth || 1920;
-          canvas.height = video.videoHeight || 1080;
+          const maxDim = 960;
+          const scale = Math.min(1, maxDim / Math.max(video.videoWidth, video.videoHeight));
+          canvas.width = Math.round(video.videoWidth * scale);
+          canvas.height = Math.round(video.videoHeight * scale);
           const ctx = canvas.getContext('2d');
           ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-          const b64 = canvas.toDataURL('image/jpeg', 0.75);
+          const b64 = canvas.toDataURL('image/jpeg', 0.85);
           fetch(`${API_BASE_URL}/api/v1/vision/sync_frame`, {
             method: "POST",
             headers: { "Content-Type": "application/json", "X-Echo-Client": "echovision-web-client" },
