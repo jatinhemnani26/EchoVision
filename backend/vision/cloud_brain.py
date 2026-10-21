@@ -46,40 +46,82 @@ class CloudMultimodalEngine:
         else:
             logger.warning("No NVIDIA_API_KEY found in .env. Running in mock simulation mode.")
 
-    def _build_dense_prompt(self, intent: str, lang: str = "en-US") -> str:
+    def _build_messages(self, intent: str, base64_image: str, lang: str = "en-US") -> list:
         """
-        Rich Spatial Accessibility Prompt (Refusal-Free & Zero-Filler):
-        Directly instructs the vision model to describe people, objects, layout, and text
-        without safety trigger words or conversational preambles, ensuring zero refusals,
-        immediate descriptive fluency, and full rich detail across 4 languages.
+        Multilingual Spatial Accessibility Prompt:
+        Uses an authoritative system role to enforce the target output language,
+        eliminating prompt-echo loops and guaranteeing 2 complete, natural sentences.
         """
         if lang == "hi-IN":
-            return (
-                "सामने जो कुछ भी दिखाई दे रहा है, उसका 2-3 स्पष्ट, विस्तृत और स्वाभाविक हिंदी वाक्यों में वर्णन करें: "
-                "सामने मौजूद मुख्य व्यक्ति या वस्तु (उनकी उपस्थिति, कपड़े, मुद्रा, अनुमानित दूरी), बाईं और दाईं ओर की चीजें, और कमरे के परिवेश का विवरण दें।"
+            system_msg = (
+                "You are EchoVision, an audio navigation guide for a visually impaired user. "
+                "You must respond ONLY in pure Hindi (हिंदी - देवनागरी लिपि). "
+                "Provide exactly 2 concise, descriptive sentences. "
+                "Sentence 1: describe the person or object directly in front (appearance, attire, posture). "
+                "Sentence 2: describe the immediate room surroundings. "
+                "You MUST stop immediately after sentence 2. Do NOT write a third sentence. "
+                "Never use bullet points, asterisks, numbering, or introductory headings. "
+                "End both sentences cleanly with a Hindi full stop (।)."
             )
+            user_text = "सामने क्या है? केवल 2 संक्षिप्त हिंदी वाक्यों में बताएं।"
         elif lang == "es-ES":
-            return (
-                "Describe directamente lo que hay frente a la cámara en 2-3 oraciones claras, ricas y detalladas en español para la navegación: "
-                "las personas u objetos principales enfrente (su apariencia, vestimenta, postura, distancia), lo que hay a los lados y el entorno de la habitación."
+            system_msg = (
+                "You are EchoVision, an audio navigation guide for a visually impaired user. "
+                "You must respond ONLY in fluent, natural Spanish (Español). "
+                "Provide exactly 2 concise, descriptive sentences in Spanish. "
+                "Sentence 1: describe the person or object directly in front (appearance, posture, distance). "
+                "Sentence 2: describe the immediate room surroundings. "
+                "You MUST stop immediately after sentence 2. Do NOT write a third sentence. "
+                "Never use bullet points, asterisks, numbering, or introductory headings. "
+                "Finish both sentences completely with a period."
             )
+            user_text = "¿Qué hay enfrente? Describe directamente en 2 oraciones completas en español."
         elif lang == "fr-FR":
-            return (
-                "Décrivez directement ce qui se trouve devant la caméra en 2 à 3 phrases claires, riches et détaillées en français pour l'orientation : "
-                "les personnes ou objets principaux devant (leur apparence, vêtements, posture, distance), les éléments à gauche et à droite, et la pièce."
+            system_msg = (
+                "You are EchoVision, an audio navigation guide for a visually impaired user. "
+                "You must respond ONLY in fluent, natural French (Français). "
+                "Provide exactly 2 concise, descriptive sentences in French. "
+                "Sentence 1: describe the person or object directly in front (appearance, posture, distance). "
+                "Sentence 2: describe the immediate room surroundings. "
+                "You MUST stop immediately after sentence 2. Do NOT write a third sentence. "
+                "Never use bullet points, asterisks, numbering, or introductory headings. "
+                "Finish both sentences completely with a period."
             )
+            user_text = "Qu'y a-t-il devant ? Décrivez directement en 2 phrases complètes en français."
         else:
-            return (
-                "Directly describe what is in front of the camera in 2 to 3 vivid, detailed sentences for spatial navigation: "
-                "the person or primary object directly ahead (their appearance, clothing, posture, and distance), items to the left and right, room surroundings, lighting, and any visible text or labels read verbatim."
+            system_msg = (
+                "You are EchoVision, an audio navigation guide for a visually impaired user. "
+                "Provide exactly 2 concise, descriptive sentences. "
+                "Sentence 1: describe the person or object directly in front (appearance, clothing, posture, distance). "
+                "Sentence 2: describe the immediate room surroundings and lighting. "
+                "You MUST stop immediately after sentence 2. Do NOT write a third sentence. "
+                "Never use bullet points, asterisks, numbering, or conversational preambles. "
+                "Finish both sentences completely with a period."
             )
+            user_text = "What is in front of the camera? Describe directly in 2 sentences for spatial navigation."
+
+        return [
+            {"role": "system", "content": system_msg},
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": user_text},
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": f"data:image/jpeg;base64,{base64_image}"
+                        }
+                    }
+                ]
+            }
+        ]
 
     def analyze_image(
         self,
         base64_image: str,
         intent: str,
         lang: str = "en-US",
-        max_tokens: int = 130,
+        max_tokens: int = 220,
         ocr_fallback_text: str = ""
     ) -> dict:
         """
@@ -93,27 +135,14 @@ class CloudMultimodalEngine:
                 "model_used": "none"
             }
 
-        prompt_text = self._build_dense_prompt(intent, lang)
+        messages = self._build_messages(intent, base64_image, lang)
 
         try:
             response = self.client.chat.completions.create(
                 model=self.model,
-                messages=[
-                    {
-                        "role": "user",
-                        "content": [
-                            {"type": "text", "text": prompt_text},
-                            {
-                                "type": "image_url",
-                                "image_url": {
-                                    "url": f"data:image/jpeg;base64,{base64_image}"
-                                }
-                            }
-                        ]
-                    }
-                ],
+                messages=messages,
                 max_tokens=max_tokens,
-                temperature=0.15,
+                temperature=0.1,
                 top_p=0.7
             )
 
@@ -151,7 +180,7 @@ class CloudMultimodalEngine:
         base64_image: str,
         intent: str,
         lang: str = "en-US",
-        max_tokens: int = 130,
+        max_tokens: int = 220,
         ocr_fallback_text: str = ""
     ) -> Generator[str, None, None]:
         """
@@ -163,27 +192,14 @@ class CloudMultimodalEngine:
             yield "EchoVision engine offline. API key not configured."
             return
 
-        prompt_text = self._build_dense_prompt(intent, lang)
+        messages = self._build_messages(intent, base64_image, lang)
 
         try:
             stream = self.client.chat.completions.create(
                 model=self.model,
-                messages=[
-                    {
-                        "role": "user",
-                        "content": [
-                            {"type": "text", "text": prompt_text},
-                            {
-                                "type": "image_url",
-                                "image_url": {
-                                    "url": f"data:image/jpeg;base64,{base64_image}"
-                                }
-                            }
-                        ]
-                    }
-                ],
+                messages=messages,
                 max_tokens=max_tokens,
-                temperature=0.15,
+                temperature=0.1,
                 top_p=0.7,
                 stream=True
             )

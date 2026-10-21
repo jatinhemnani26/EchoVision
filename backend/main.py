@@ -120,7 +120,7 @@ class SyncFrameRequest(BaseModel):
 def sync_live_frame(req: SyncFrameRequest, request: Request):
     client_ip = request.client.host if request.client else "unknown"
     verify_client_origin(request)
-    check_ip_rate_limit(client_ip)
+    # Background frame cache update: does not invoke VLM and must not consume IP rate quota
 
     global LATEST_LIVE_FRAME_B64
     clean_b64 = req.image_base64
@@ -224,7 +224,7 @@ async def alexa_webhook(req: dict):
         else:
             check_global_cloud_quota()
             prompt = "Describe the primary objects, people, spatial layout, and any visible text in front of the camera in 2 clear, helpful sentences for an audio guide."
-            cloud_result = cloud_brain.analyze_image(base64_image, prompt, max_tokens=85)
+            cloud_result = cloud_brain.analyze_image(base64_image, prompt, max_tokens=220)
             if cloud_result.get("success"):
                 spoken_text = cloud_result["description"]
             else:
@@ -325,7 +325,7 @@ def analyze_scene(req: AnalyzeRequest, request: Request):
             base64_image,
             req.intent,
             lang=req.lang,
-            max_tokens=130,
+            max_tokens=220,
             ocr_fallback_text=ocr_text
         )
         response_payload["cloud_analysis"] = cloud_result
@@ -380,7 +380,7 @@ def analyze_scene_stream(req: AnalyzeRequest, request: Request):
                 clean_b64,
                 req.intent or "general",
                 lang=req.lang or "en-US",
-                max_tokens=130
+                max_tokens=220
             ):
                 payload = json.dumps({"token": token})
                 yield f"data: {payload}\n\n"
