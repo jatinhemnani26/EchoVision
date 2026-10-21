@@ -981,9 +981,32 @@
   <script>
     const API_BASE_URL = window.location.hostname === '127.0.0.1' || window.location.hostname === 'localhost'
         ? 'http://127.0.0.1:8000'
-        : 'https://echovision-backend-w6ns.onrender.com'; // TODO: Update with Render URL once deployed
+        : 'https://echovision-backend-w6ns.onrender.com';
+
+    // Proactive Render Cloud Brain Pre-Warming & Keep-Alive
+    let backendWarm = false;
+    async function warmUpBackend() {
+      try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 8000);
+        const resp = await fetch(`${API_BASE_URL}/health`, {
+          method: 'GET',
+          cache: 'no-cache',
+          signal: controller.signal,
+          headers: { 'X-Echo-Client': 'echovision-web-client' }
+        });
+        clearTimeout(timeoutId);
+        if (resp.ok) {
+          backendWarm = true;
+          console.log('EchoVision Core Engine is warm and ready.');
+        }
+      } catch (err) {
+        console.log('Pre-warming Render backend in background...');
+      }
+    }
 
     function startExperience() {
+        warmUpBackend();
         const splash = document.getElementById('splashScreen');
         const overlay = document.getElementById('empathyOverlay');
         const pill = document.getElementById('perspectiveToggleBtn');
@@ -1118,22 +1141,16 @@
       }
     }
 
+    window._activeUtterances = [];
+
     function speakSpatialPhrase(phrase, lang) {
       if (!phrase || !('speechSynthesis' in window)) return;
       const cleanPhrase = phrase.trim();
       if (!cleanPhrase) return;
 
-      // Spatial stereo acoustic cue when directional words occur
-      const lower = cleanPhrase.toLowerCase();
-      if (lower.includes('left')) {
-        playSonarPing(720, -0.7); // Left auditory spatial cue
-      } else if (lower.includes('right')) {
-        playSonarPing(980, 0.7);  // Right auditory spatial cue
-      }
-
       const utterance = new SpeechSynthesisUtterance(cleanPhrase);
-      utterance.rate = 1.08;
-      utterance.pitch = 0.98;
+      utterance.rate = 1.05;
+      utterance.pitch = 1.0;
 
       let targetLang = lang || 'en-US';
       if (/[\u0900-\u097F]/.test(cleanPhrase)) {
@@ -1142,16 +1159,27 @@
       utterance.lang = targetLang;
 
       const voices = window.speechSynthesis.getVoices();
-      const preferredVoice = voices.find(v => v.lang === targetLang || v.lang.startsWith(targetLang) || v.lang.startsWith(targetLang.split('-')[0]));
+      const baseCode = targetLang.split('-')[0].toLowerCase();
+      const preferredVoice = voices.find(v => {
+        const vLang = (v.lang || '').replace('_', '-').toLowerCase();
+        return vLang === targetLang.toLowerCase() || vLang.startsWith(baseCode);
+      });
       if (preferredVoice) {
         utterance.voice = preferredVoice;
       }
 
+      // Retain reference to prevent Chromium garbage collection clipping speech mid-sentence
+      window._activeUtterances.push(utterance);
       utterance.onend = () => {
+        window._activeUtterances = window._activeUtterances.filter(u => u !== utterance);
         const statusText = document.getElementById('metaStatus');
         if (statusText && !window.speechSynthesis.speaking) {
           statusText.innerText = camOn ? 'Camera Live (1080p 60FPS)' : 'System Ready';
         }
+      };
+      utterance.onerror = (e) => {
+        window._activeUtterances = window._activeUtterances.filter(u => u !== utterance);
+        console.warn('Speech synthesis error:', e);
       };
 
       window.speechSynthesis.speak(utterance);
@@ -1218,7 +1246,11 @@
 
       // =========================================================================
       // FAST PATH: SERVER-SENT EVENTS (SSE) STREAMING SPEECH PIPELINE
+      // With 18s AbortController to eliminate 2-minute freeze cascades
       // =========================================================================
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 18000);
+
       try {
         const response = await fetch(`${API_BASE_URL}/api/v1/vision/analyze/stream`, {
           method: "POST",
@@ -1226,8 +1258,10 @@
             "Content-Type": "application/json",
             "X-Echo-Client": "echovision-web-client"
           },
-          body: JSON.stringify(payload)
+          body: JSON.stringify(payload),
+          signal: controller.signal
         });
+        clearTimeout(timeoutId);
 
         if (response.ok && response.body) {
           streamSucceeded = true;
@@ -1327,42 +1361,26 @@
           }
         }
       } catch(streamErr) {
-        console.warn("Streaming pipeline fallback to sync:", streamErr);
+        clearTimeout(timeoutId);
+        console.warn("Streaming pipeline error / timeout:", streamErr);
       }
 
       // =========================================================================
-      // FALLBACK PATH: SYNCHRONOUS INFERENCE (If streaming unsupported or failed)
+      // GRACEFUL INSTANT FALLBACK (Eliminates 40-second secondary freeze cascade)
       // =========================================================================
       if (!streamSucceeded) {
-        try {
-          const response = await fetch(`${API_BASE_URL}/api/v1/vision/analyze`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json", "X-Echo-Client": "echovision-web-client" },
-            body: JSON.stringify(payload)
-          });
-          const data = await response.json();
-          let textToSpeak = "";
-
-          if (data.routing && data.routing.route === "LOCAL_EDGE") {
-            textToSpeak = "Local extraction complete. " + (data.routing.ocr_data?.text || "");
-            document.getElementById('heroDetail').innerText = "Edge OCR ($0.00): " + (data.routing.ocr_data?.text || "");
-            document.getElementById('heroTitle').innerHTML = `Local Edge<br>Processed ($0.00)`;
-          } else if (data.cloud_analysis && data.cloud_analysis.success) {
-            textToSpeak = data.cloud_analysis.description;
-            document.getElementById('heroDetail').innerText = textToSpeak;
-            document.getElementById('heroTitle').innerHTML = `Visual Context<br>Analysis`;
-          } else {
-            textToSpeak = "Optical sensor active. Objects positioned directly in your forward view.";
-            document.getElementById('heroDetail').innerText = textToSpeak;
-            document.getElementById('heroTitle').innerHTML = `Optical Sensor Active`;
-          }
-
-          speakSpatialPhrase(textToSpeak, selectedLang);
-        } catch(err) {
-          console.error("Analysis error:", err);
-          statusText.innerText = 'Backend Offline';
-          alert("Failed to connect to backend. Please ensure the backend is running.");
-        }
+        warmUpBackend();
+        const fallbackMsgs = {
+          "hi-IN": "इकोविज़न सेंसर सक्रिय हो रहा है। कृपया कुछ सेकंड में पुनः पूछें।",
+          "es-ES": "Sensor EchoVision inicializando. Por favor consulte de nuevo en unos segundos.",
+          "fr-FR": "Capteur EchoVision en cours d'initialisation. Veuillez redemander dans un instant.",
+          "en-US": "EchoVision vision sensor is warming up. Please ask again in a moment."
+        };
+        const failText = fallbackMsgs[selectedLang] || fallbackMsgs["en-US"];
+        document.getElementById('heroDetail').innerText = failText;
+        document.getElementById('heroTitle').innerHTML = `Sensor Readying...`;
+        statusText.innerText = 'Sensor Readying';
+        speakSpatialPhrase(failText, selectedLang);
       }
     }
 
@@ -1607,8 +1625,11 @@
         window.speechSynthesis.getVoices();
     }
 
-    // Initialize Device Region Settings
+    // Initialize Device Region Settings & Warm up Cloud Backend
     window.addEventListener('DOMContentLoaded', () => {
+        warmUpBackend();
+        setInterval(warmUpBackend, 210000); // Keep alive every 3.5 minutes while user has tab open
+
         const savedLang = localStorage.getItem('echovision_region_lang');
         if (savedLang) {
             const dropdown = document.getElementById('micLang');

@@ -323,7 +323,7 @@ def analyze_scene(req: AnalyzeRequest, request: Request):
             base64_image,
             req.intent,
             lang=req.lang,
-            max_tokens=90,
+            max_tokens=130,
             ocr_fallback_text=ocr_text
         )
         response_payload["cloud_analysis"] = cloud_result
@@ -378,7 +378,7 @@ def analyze_scene_stream(req: AnalyzeRequest, request: Request):
                 clean_b64,
                 req.intent or "general",
                 lang=req.lang or "en-US",
-                max_tokens=90
+                max_tokens=130
             ):
                 payload = json.dumps({"token": token})
                 yield f"data: {payload}\n\n"
