@@ -164,6 +164,7 @@ def health_check():
     return {
         "status": "online",
         "service": "EchoVision Core Engine",
+        "version": "2.2-cloud-accelerated",
         "cloud_engine_ready": bool(cloud_brain.client is not None),
         "model": cloud_brain.model,
         "ocr_available": ocr_engine.is_available,
@@ -354,6 +355,8 @@ def analyze_scene_stream(req: AnalyzeRequest, request: Request):
             clean_b64 = clean_b64.split(",")[1]
     elif LATEST_LIVE_FRAME_B64:
         clean_b64 = LATEST_LIVE_FRAME_B64
+    elif CACHED_FALLBACK_B64:
+        clean_b64 = CACHED_FALLBACK_B64
     else:
         # Check if local hardware webcam is available
         frame = camera_manager.get_frame()
@@ -361,8 +364,15 @@ def analyze_scene_stream(req: AnalyzeRequest, request: Request):
             _, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 75])
             clean_b64 = base64.b64encode(buffer).decode('utf-8')
 
+    sse_headers = {
+        "Cache-Control": "no-cache, no-transform",
+        "Connection": "keep-alive",
+        "X-Accel-Buffering": "no"
+    }
+
     if not clean_b64:
         def missing_cam_stream():
+            yield ": stream-open\n\n"
             msg = "Camera lens is initializing. Please point your camera forward."
             if req.lang == "hi-IN":
                 msg = "कैमरा लेंस शुरू हो रहा है। कृपया अपने कैमरे को सामने रखें।"
@@ -372,9 +382,10 @@ def analyze_scene_stream(req: AnalyzeRequest, request: Request):
                 msg = "La caméra démarre. Veuillez orienter votre objectif vers la scène."
             yield f"data: {json.dumps({'token': msg})}\n\n"
             yield "data: [DONE]\n\n"
-        return StreamingResponse(missing_cam_stream(), media_type="text/event-stream")
+        return StreamingResponse(missing_cam_stream(), media_type="text/event-stream", headers=sse_headers)
 
     def event_stream():
+        yield ": stream-open\n\n"
         try:
             for token in cloud_brain.stream_image_analysis(
                 clean_b64,
@@ -393,11 +404,7 @@ def analyze_scene_stream(req: AnalyzeRequest, request: Request):
     return StreamingResponse(
         event_stream(),
         media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "X-Accel-Buffering": "no"
-        }
+        headers=sse_headers
     )
 
 
