@@ -55,31 +55,23 @@ class CloudMultimodalEngine:
         """
         if lang == "hi-IN":
             return (
-                "तुम दृष्टिबाधित व्यक्ति के लिए एक सहायक कैमरा गाइड हो।\n"
-                "महत्वपूर्ण: अपना परिचय न दें और न ही यह कहें कि आप क्या करने जा रहे हैं।\n"
-                "सीधे दृश्य का 2-3 स्पष्ट, विस्तृत और स्वाभाविक हिंदी वाक्यों में वर्णन शुरू करें: "
-                "सामने मौजूद मुख्य व्यक्ति या वस्तु (उनकी उपस्थिति, कपड़े, मुद्रा, अनुमानित दूरी), बाईं और दाईं ओर की चीजें, और परिवेश का पूरा विवरण दें।"
+                "सामने जो कुछ भी दिखाई दे रहा है, उसका 2-3 स्पष्ट, विस्तृत और स्वाभाविक हिंदी वाक्यों में वर्णन करें: "
+                "सामने मौजूद मुख्य व्यक्ति या वस्तु (उनकी उपस्थिति, कपड़े, मुद्रा, अनुमानित दूरी), बाईं और दाईं ओर की चीजें, और कमरे के परिवेश का विवरण दें।"
             )
         elif lang == "es-ES":
             return (
-                "Eres un asistente de visión espacial para una persona con discapacidad visual.\n"
-                "IMPORTANTE: No te presentes ni uses preámbulos conversacionales.\n"
-                "Describe directamente lo que hay frente a la cámara en 2-3 oraciones ricas y detalladas en español: "
-                "las personas u objetos principales enfrente (apariencia, vestimenta, postura, distancia), lo que hay a los lados, y el entorno de la habitación."
+                "Describe directamente lo que hay frente a la cámara en 2-3 oraciones claras, ricas y detalladas en español para la navegación: "
+                "las personas u objetos principales enfrente (su apariencia, vestimenta, postura, distancia), lo que hay a los lados y el entorno de la habitación."
             )
         elif lang == "fr-FR":
             return (
-                "Vous êtes un guide visuel spatial pour une personne malvoyante.\n"
-                "IMPORTANT : Ne vous présentez pas et n'utilisez pas de formule d'introduction.\n"
-                "Décrivez directement la scène en 2-3 phrases riches et détaillées en français : "
-                "les personnes ou objets principaux devant (apparence, vêtements, posture, distance), les éléments à gauche et à droite, et l'environnement."
+                "Décrivez directement ce qui se trouve devant la caméra en 2 à 3 phrases claires, riches et détaillées en français pour l'orientation : "
+                "les personnes ou objets principaux devant (leur apparence, vêtements, posture, distance), les éléments à gauche et à droite, et la pièce."
             )
         else:
             return (
-                "You are an intelligent audio-visual guide for a visually impaired user.\n"
-                "IMPORTANT: Do NOT introduce yourself or use conversational preambles.\n"
-                "Directly start describing what is in front of the camera in 2 to 3 vivid, detailed sentences for spatial navigation: "
-                "the person or primary object directly ahead (appearance, clothing, posture, distance), items to the left and right, room surroundings, lighting, and any visible text or labels read verbatim."
+                "Directly describe what is in front of the camera in 2 to 3 vivid, detailed sentences for spatial navigation: "
+                "the person or primary object directly ahead (their appearance, clothing, posture, and distance), items to the left and right, room surroundings, lighting, and any visible text or labels read verbatim."
             )
 
     def analyze_image(
