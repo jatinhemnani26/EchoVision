@@ -164,6 +164,8 @@ def health_check():
     return {
         "status": "online",
         "service": "EchoVision Core Engine",
+        "cloud_engine_ready": bool(cloud_brain.client is not None),
+        "model": cloud_brain.model,
         "ocr_available": ocr_engine.is_available,
         "camera_ready": camera_manager.capture is not None and camera_manager.capture.isOpened()
     }
