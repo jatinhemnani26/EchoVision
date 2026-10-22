@@ -1248,8 +1248,9 @@
       // FAST PATH: SERVER-SENT EVENTS (SSE) STREAMING SPEECH PIPELINE
       // With 18s AbortController to eliminate 2-minute freeze cascades
       // =========================================================================
+      // Fast 8.5s timeout: eliminates lag cascades and ensures rapid feedback
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 18000);
+      const timeoutId = setTimeout(() => controller.abort(), 8500);
 
       try {
         const response = await fetch(`${API_BASE_URL}/api/v1/vision/analyze/stream`, {

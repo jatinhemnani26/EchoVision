@@ -24,73 +24,14 @@ app = FastAPI(
     version="1.0.0"
 )
 
-# CORS: Restricted to official frontend domains and local development
-ALLOWED_ORIGINS = [
-    "https://echovision45.vercel.app",
-    "https://echovision-theta.vercel.app",
-    "http://localhost:3000",
-    "http://127.0.0.1:3000",
-    "http://localhost:8000",
-    "http://127.0.0.1:8000",
-]
-
+# Open High-Speed CORS for instant browser access
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=ALLOWED_ORIGINS,
-    allow_origin_regex=r"https://.*\.vercel\.app",
+    allow_origins=["*"],
     allow_credentials=True,
-    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_methods=["*"],
     allow_headers=["*"],
 )
-
-# ==============================================================================
-# Token & API Quota Protection (Anti-Abuse Layer)
-# ==============================================================================
-MAX_REQUESTS_PER_MIN_PER_IP = 20
-GLOBAL_HOURLY_CLOUD_LIMIT = 100  # Strict hourly ceiling on NVIDIA VLM calls
-
-ip_request_history = defaultdict(list)
-global_cloud_history = []
-
-def check_ip_rate_limit(client_ip: str):
-    """Enforces max 20 requests per minute per IP address."""
-    now = time.time()
-    ip_request_history[client_ip] = [t for t in ip_request_history[client_ip] if now - t < 60]
-    if len(ip_request_history[client_ip]) >= MAX_REQUESTS_PER_MIN_PER_IP:
-        raise HTTPException(
-            status_code=429,
-            detail="Rate limit exceeded. Maximum 20 requests per minute allowed per IP."
-        )
-    ip_request_history[client_ip].append(now)
-
-def check_global_cloud_quota():
-    """Circuit breaker: caps total NVIDIA VLM inferences across all clients per hour."""
-    global global_cloud_history
-    now = time.time()
-    global_cloud_history = [t for t in global_cloud_history if now - t < 3600]
-    if len(global_cloud_history) >= GLOBAL_HOURLY_CLOUD_LIMIT:
-        raise HTTPException(
-            status_code=429,
-            detail="Public demo hourly cloud quota reached. Please try again shortly."
-        )
-    global_cloud_history.append(now)
-
-def verify_client_origin(request: Request):
-    """Validates that requests come from the legitimate frontend client."""
-    client_header = request.headers.get("x-echo-client")
-    origin = request.headers.get("origin", "")
-    referer = request.headers.get("referer", "")
-    
-    trusted_patterns = ["echovision45.vercel.app", "echovision-theta.vercel.app", "localhost", "127.0.0.1"]
-    matches_origin = any(pattern in origin or pattern in referer for pattern in trusted_patterns)
-    
-    if client_header == "echovision-web-client" or matches_origin:
-        return True
-    
-    raise HTTPException(
-        status_code=403,
-        detail="Access denied. Requests must originate from the official EchoVision application."
-    )
 
 # Initialize Core Services
 camera_manager = CameraManager(camera_index=0)
@@ -164,7 +105,7 @@ def health_check():
     return {
         "status": "online",
         "service": "EchoVision Core Engine",
-        "version": "2.2-cloud-accelerated",
+        "version": "2.3-unthrottled-lightning",
         "cloud_engine_ready": bool(cloud_brain.client is not None),
         "model": cloud_brain.model,
         "ocr_available": ocr_engine.is_available,
@@ -223,9 +164,8 @@ async def alexa_webhook(req: dict):
         if not base64_image:
             spoken_text = "EchoVision vision sensor is active. All surroundings appear clear and illuminated."
         else:
-            check_global_cloud_quota()
             prompt = "Describe the primary objects, people, spatial layout, and any visible text in front of the camera in 2 clear, helpful sentences for an audio guide."
-            cloud_result = cloud_brain.analyze_image(base64_image, prompt, max_tokens=220)
+            cloud_result = cloud_brain.analyze_image(base64_image, prompt, max_tokens=110)
             if cloud_result.get("success"):
                 spoken_text = cloud_result["description"]
             else:
@@ -251,17 +191,11 @@ def video_feed(cam_index: int = 0):
 
 
 @app.post("/api/v1/vision/analyze")
-def analyze_scene(req: AnalyzeRequest, request: Request):
+def analyze_scene(req: AnalyzeRequest):
     """
-    Core 2-Tier Triage Pipeline with Token & Abuse Protection:
-    1. Authenticates request origin and client token.
-    2. Enforces IP rate limits and global cloud circuit breaker.
-    3. Runs local OCR triage first ($0.00). If spatial/unclear -> NVIDIA NIM VLM.
+    Core 2-Tier Triage Pipeline:
+    1. Runs local OCR triage first ($0.00). If spatial/unclear -> NVIDIA NIM VLM.
     """
-    client_ip = request.client.host if request.client else "unknown"
-    verify_client_origin(request)
-    check_ip_rate_limit(client_ip)
-
     frame = None
     if req.image_base64:
         try:
@@ -317,7 +251,6 @@ def analyze_scene(req: AnalyzeRequest, request: Request):
     }
 
     if routing_decision["needs_cloud"]:
-        check_global_cloud_quota()
         response_payload["cloud_payload"] = {
             "image_format": "jpeg"
         }
@@ -326,7 +259,7 @@ def analyze_scene(req: AnalyzeRequest, request: Request):
             base64_image,
             req.intent,
             lang=req.lang,
-            max_tokens=220,
+            max_tokens=110,
             ocr_fallback_text=ocr_text
         )
         response_payload["cloud_analysis"] = cloud_result
@@ -335,19 +268,11 @@ def analyze_scene(req: AnalyzeRequest, request: Request):
 
 
 @app.post("/api/v1/vision/analyze/stream")
-def analyze_scene_stream(req: AnalyzeRequest, request: Request):
+def analyze_scene_stream(req: AnalyzeRequest):
     """
     Sub-1-Second Streaming Vision Pipeline (SSE + Zero-Decode Fast Path):
-    1. Authenticates client and applies IP rate limit / circuit breaker.
-    2. Zero-Decode Fast Path: Direct feed of 1080p JPEG base64 to NVIDIA NIM,
-       completely avoiding OpenCV decode & encode CPU bottlenecks on Render.
-    3. Streams SSE delta tokens with X-Accel-Buffering: no for instant chunk delivery.
+    Direct feed of JPEG base64 to NVIDIA NIM, streaming SSE tokens instantly.
     """
-    client_ip = request.client.host if request.client else "unknown"
-    verify_client_origin(request)
-    check_ip_rate_limit(client_ip)
-    check_global_cloud_quota()
-
     clean_b64 = None
     if req.image_base64:
         clean_b64 = req.image_base64
@@ -391,7 +316,7 @@ def analyze_scene_stream(req: AnalyzeRequest, request: Request):
                 clean_b64,
                 req.intent or "general",
                 lang=req.lang or "en-US",
-                max_tokens=220
+                max_tokens=110
             ):
                 payload = json.dumps({"token": token})
                 yield f"data: {payload}\n\n"
@@ -409,9 +334,8 @@ def analyze_scene_stream(req: AnalyzeRequest, request: Request):
 
 
 @app.get("/api/v1/vision/ocr")
-def read_text_direct(request: Request):
+def read_text_direct():
     """Direct local OCR execution on current frame."""
-    verify_client_origin(request)
     frame = camera_manager.get_frame()
     if frame is None:
         raise HTTPException(status_code=500, detail="Failed to capture frame.")

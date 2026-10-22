@@ -34,9 +34,9 @@ class CloudMultimodalEngine:
                     base_url=self.base_url,
                     api_key=self.api_key,
                     http_client=httpx.Client(
-                        timeout=httpx.Timeout(20.0, connect=8.0, read=20.0, write=10.0)
+                        timeout=httpx.Timeout(15.0, connect=5.0, read=15.0, write=5.0)
                     ),
-                    max_retries=1
+                    max_retries=0
                 )
                 logger.info(f"Connected to NVIDIA NIM Cloud Brain ({self.model})")
             except ImportError:
@@ -121,7 +121,7 @@ class CloudMultimodalEngine:
         base64_image: str,
         intent: str,
         lang: str = "en-US",
-        max_tokens: int = 220,
+        max_tokens: int = 110,
         ocr_fallback_text: str = ""
     ) -> dict:
         """
@@ -180,7 +180,7 @@ class CloudMultimodalEngine:
         base64_image: str,
         intent: str,
         lang: str = "en-US",
-        max_tokens: int = 220,
+        max_tokens: int = 110,
         ocr_fallback_text: str = ""
     ) -> Generator[str, None, None]:
         """
