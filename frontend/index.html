@@ -1214,18 +1214,18 @@
         }
       }
 
-      // Capture 320px single ViT patch frame (~4KB payload, sub-5ms network transit, 16x faster GPU processing)
+      // Capture crisp 720px high-fidelity frame (maximum text readability & object clarity with sub-second streaming)
       let browserFrameB64 = null;
       if (video && video.videoWidth > 0) {
         try {
           const canvas = document.createElement('canvas');
-          const maxDim = 320;
+          const maxDim = 720;
           const scale = Math.min(1, maxDim / Math.max(video.videoWidth, video.videoHeight));
           canvas.width = Math.round(video.videoWidth * scale);
           canvas.height = Math.round(video.videoHeight * scale);
           const ctx = canvas.getContext('2d');
           ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-          browserFrameB64 = canvas.toDataURL('image/jpeg', 0.60);
+          browserFrameB64 = canvas.toDataURL('image/jpeg', 0.70);
         } catch(e) {
           console.warn("Could not capture frame from canvas:", e);
         }
@@ -1518,13 +1518,13 @@
       if (camOn && video && video.videoWidth > 0) {
         try {
           const canvas = document.createElement('canvas');
-          const maxDim = 320;
+          const maxDim = 720;
           const scale = Math.min(1, maxDim / Math.max(video.videoWidth, video.videoHeight));
           canvas.width = Math.round(video.videoWidth * scale);
           canvas.height = Math.round(video.videoHeight * scale);
           const ctx = canvas.getContext('2d');
           ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-          const b64 = canvas.toDataURL('image/jpeg', 0.60);
+          const b64 = canvas.toDataURL('image/jpeg', 0.70);
           fetch(`${API_BASE_URL}/api/v1/vision/sync_frame`, {
             method: "POST",
             headers: { "Content-Type": "application/json", "X-Echo-Client": "echovision-web-client" },

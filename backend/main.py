@@ -105,7 +105,7 @@ def health_check():
     return {
         "status": "online",
         "service": "EchoVision Core Engine",
-        "version": "2.4-single-tile-lightning",
+        "version": "2.5-720p-high-fidelity",
         "cloud_engine_ready": bool(cloud_brain.client is not None),
         "model": cloud_brain.model,
         "ocr_available": ocr_engine.is_available,
@@ -229,16 +229,16 @@ def analyze_scene(req: AnalyzeRequest):
     # Step 2: Evaluate via 2-Tier Cost-Mitigation Router
     routing_decision = vision_router.evaluate_frame(ocr_preprocessed, user_intent=req.intent)
 
-    # Step 3: For the Cloud Brain (NVIDIA VLM), downscale to 320px single ViT tile & 60% quality
-    # Shrinks payload to ~4KB, delivering 16x faster GPU visual encoding on NVIDIA NIM!
+    # Step 3: For the Cloud Brain (NVIDIA VLM), downscale to 720px high-fidelity & 70% quality
+    # Perfect balance: razor-sharp text and fine details while avoiding GPU queue tiling bottlenecks
     h, w = frame.shape[:2]
-    if max(w, h) > 320:
-        scale = 320.0 / max(w, h)
+    if max(w, h) > 720:
+        scale = 720.0 / max(w, h)
         frame_cloud = cv2.resize(frame, (int(w * scale), int(h * scale)))
     else:
         frame_cloud = frame
 
-    _, buffer = cv2.imencode('.jpg', frame_cloud, [cv2.IMWRITE_JPEG_QUALITY, 60])
+    _, buffer = cv2.imencode('.jpg', frame_cloud, [cv2.IMWRITE_JPEG_QUALITY, 70])
     base64_image = base64.b64encode(buffer).decode('utf-8')
 
     response_payload = {
