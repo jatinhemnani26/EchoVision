@@ -34,7 +34,7 @@ class CloudMultimodalEngine:
                     base_url=self.base_url,
                     api_key=self.api_key,
                     http_client=httpx.Client(
-                        timeout=httpx.Timeout(15.0, connect=5.0, read=15.0, write=5.0)
+                        timeout=httpx.Timeout(25.0, connect=6.0, read=25.0, write=6.0)
                     ),
                     max_retries=0
                 )
@@ -121,7 +121,7 @@ class CloudMultimodalEngine:
         base64_image: str,
         intent: str,
         lang: str = "en-US",
-        max_tokens: int = 110,
+        max_tokens: int = 140,
         ocr_fallback_text: str = ""
     ) -> dict:
         """
@@ -146,7 +146,19 @@ class CloudMultimodalEngine:
                 top_p=0.7
             )
 
-            description = response.choices[0].message.content.strip()
+            raw_text = response.choices[0].message.content.strip()
+            # Cleanly stop at sentence 2 boundary if extra sentences are generated
+            marks = [".", "!", "?", "\u0964"]
+            found = 0
+            cut_idx = -1
+            for idx, c in enumerate(raw_text):
+                if c in marks:
+                    found += 1
+                    if found == 2:
+                        cut_idx = idx + 1
+                        break
+            description = raw_text[:cut_idx].strip() if cut_idx != -1 else raw_text
+
             return {
                 "success": True,
                 "description": description,
@@ -180,7 +192,7 @@ class CloudMultimodalEngine:
         base64_image: str,
         intent: str,
         lang: str = "en-US",
-        max_tokens: int = 110,
+        max_tokens: int = 140,
         ocr_fallback_text: str = ""
     ) -> Generator[str, None, None]:
         """
@@ -205,12 +217,18 @@ class CloudMultimodalEngine:
             )
 
             has_yielded = False
+            sentence_count = 0
             for chunk in stream:
                 if chunk.choices and len(chunk.choices) > 0:
                     delta = chunk.choices[0].delta.content or ""
                     if delta:
                         has_yielded = True
                         yield delta
+                        for char in delta:
+                            if char in [".", "!", "?", "\u0964"]:
+                                sentence_count += 1
+                        if sentence_count >= 2:
+                            break
 
             if not has_yielded:
                 yield "Scene visible and illuminated directly in front of the camera."
