@@ -1248,9 +1248,9 @@
       // FAST PATH: SERVER-SENT EVENTS (SSE) STREAMING SPEECH PIPELINE
       // With 18s AbortController to eliminate 2-minute freeze cascades
       // =========================================================================
-      // Resilient 35s timeout for cloud VLM streaming
+      // Resilient 50s timeout to absorb Render cold-starts + VLM inference
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 35000);
+      const timeoutId = setTimeout(() => controller.abort(), 50000);
 
       try {
         const response = await fetch(`${API_BASE_URL}/api/v1/vision/analyze/stream`, {

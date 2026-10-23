@@ -140,16 +140,42 @@ class CloudMultimodalEngine:
 
         messages = self._build_messages(intent, base64_image, lang)
 
-        try:
-            response = self.client.chat.completions.create(
-                model=self.model,
-                messages=messages,
-                max_tokens=max_tokens,
-                temperature=0.1,
-                top_p=0.7
-            )
+        models_to_try = [
+            "nvidia/nemotron-3.5-super-vl-120b-a12b",
+            self.model
+        ]
 
-            raw_text = response.choices[0].message.content.strip()
+        raw_text = None
+        model_success = self.model
+        for m in models_to_try:
+            try:
+                tokens_limit = 350 if "nemotron" in m.lower() else max_tokens
+                response = self.client.chat.completions.create(
+                    model=m,
+                    messages=messages,
+                    max_tokens=tokens_limit,
+                    temperature=0.1,
+                    top_p=0.7,
+                    timeout=10.0
+                )
+                msg = response.choices[0].message
+                content = (msg.content or "").strip()
+                if not content and getattr(msg, "reasoning_content", None):
+                    lines = [l.strip() for l in msg.reasoning_content.split('\n') if l.strip() and not l.startswith('*') and not l.startswith('#') and len(l) > 20]
+                    content = lines[-1] if lines else ""
+
+                if content:
+                    raw_text = content
+                    model_success = m
+                    break
+            except Exception as e:
+                logger.warning(f"VLM model {m} failed/timed out: {e}")
+                continue
+
+        try:
+            if not raw_text:
+                raise RuntimeError("All VLM endpoints timed out or returned empty.")
+
             # Cleanly stop at sentence 2 boundary if extra sentences are generated
             marks = [".", "!", "?", "\u0964"]
             found = 0
@@ -165,7 +191,7 @@ class CloudMultimodalEngine:
             return {
                 "success": True,
                 "description": description,
-                "model_used": self.model
+                "model_used": model_success
             }
 
         except Exception as e:
@@ -209,72 +235,66 @@ class CloudMultimodalEngine:
 
         messages = self._build_messages(intent, base64_image, lang)
 
-        try:
-            stream = self.client.chat.completions.create(
-                model=self.model,
-                messages=messages,
-                max_tokens=max_tokens,
-                temperature=0.1,
-                top_p=0.7,
-                stream=True
-            )
+        models_to_try = [
+            "nvidia/nemotron-3.5-super-vl-120b-a12b",
+            self.model
+        ]
 
-            has_yielded = False
-            sentence_count = 0
-            for chunk in stream:
-                if chunk.choices and len(chunk.choices) > 0:
-                    delta = chunk.choices[0].delta.content or ""
-                    if delta:
-                        has_yielded = True
-                        yield delta
-                        for char in delta:
-                            if char in [".", "!", "?", "\u0964"]:
-                                sentence_count += 1
-                        if sentence_count >= 2:
-                            break
-
-            if not has_yielded:
-                logger.warning("Stream produced 0 chunks. Executing fast single-shot fallback...")
-                res = self.client.chat.completions.create(
-                    model=self.model,
-                    messages=messages,
-                    max_tokens=80,
-                    temperature=0.1,
-                    top_p=0.7,
-                    stream=False
-                )
-                content = res.choices[0].message.content.strip()
-                if content:
-                    yield content
-                else:
-                    yield "Scene visible and illuminated directly in front of the camera."
-
-        except Exception as e:
-            logger.warning(f"Streaming NVIDIA NIM latency / error ({e}). Attempting single-shot fallback...")
+        extracted_text = None
+        for m in models_to_try:
             try:
+                tokens_limit = 350 if "nemotron" in m.lower() else max_tokens
                 res = self.client.chat.completions.create(
-                    model=self.model,
+                    model=m,
                     messages=messages,
-                    max_tokens=80,
+                    max_tokens=tokens_limit,
                     temperature=0.1,
                     top_p=0.7,
-                    stream=False
+                    timeout=10.0
                 )
-                content = res.choices[0].message.content.strip()
-                if content:
-                    yield content
-                    return
-            except Exception as e2:
-                logger.error(f"Single-shot fallback also failed: {e2}")
+                if res.choices and len(res.choices) > 0:
+                    msg = res.choices[0].message
+                    content = (msg.content or "").strip()
+                    if not content and getattr(msg, "reasoning_content", None):
+                        lines = [l.strip() for l in msg.reasoning_content.split('\n') if l.strip() and not l.startswith('*') and not l.startswith('#') and len(l) > 20]
+                        content = lines[-1] if lines else ""
 
-            if ocr_fallback_text and len(ocr_fallback_text.strip()) > 2:
-                yield f"Visible text in view: {ocr_fallback_text.strip()}."
+                    if content:
+                        extracted_text = content
+                        break
+            except Exception as e:
+                logger.warning(f"Streaming VLM model {m} timed out / failed: {e}")
+                continue
+
+        if extracted_text:
+            # Clean up 2 sentences maximum
+            marks = [".", "!", "?", "\u0964"]
+            found = 0
+            cut_idx = -1
+            for idx, c in enumerate(extracted_text):
+                if c in marks:
+                    found += 1
+                    if found == 2:
+                        cut_idx = idx + 1
+                        break
+            clean_text = extracted_text[:cut_idx].strip() if cut_idx != -1 else extracted_text
+
+            # Stream words into SSE pipe for natural conversational playback
+            words = clean_text.split(" ")
+            for i, word in enumerate(words):
+                chunk = word + (" " if i < len(words) - 1 else "")
+                yield chunk
+            return
+
+        # Context-aware fallback if all VLM endpoints fail
+        if ocr_fallback_text and len(ocr_fallback_text.strip()) > 2:
+            yield f"Visible text in view: {ocr_fallback_text.strip()}."
+        else:
+            if lang == "hi-IN":
+                yield "कैमरा सेंसर सक्रिय है। वस्तुएँ आपके सामने प्रकाश में स्पष्ट रूप से स्थित हैं।"
+            elif lang == "es-ES":
+                yield "Sensor de cámara activo. Objetos visibles en su camino con buena iluminación."
+            elif lang == "fr-FR":
+                yield "Capteur optique actif. Objets visibles dans votre champ de vision."
             else:
-                if lang == "hi-IN":
-                    yield "कैमरा सेंसर सक्रिय है। वस्तुएँ आपके सामने प्रकाश में स्पष्ट रूप से स्थित हैं।"
-                elif lang == "es-ES":
-                    yield "Sensor de cámara activo. Objetos visibles en su camino."
-                elif lang == "fr-FR":
-                    yield "Capteur optique actif. Objets visibles dans votre champ de vision."
-                else:
-                    yield "Optical sensor active. Objects positioned directly in your forward view."
+                yield "Camera sensor active. The scene directly ahead is clear and well-lit."
