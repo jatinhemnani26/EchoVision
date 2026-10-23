@@ -42,7 +42,14 @@ stream_active = False
 
 # Pre-cache fallback image in memory for sub-second Alexa responses on cloud hosts
 CACHED_FALLBACK_B64 = None
-for _fp in ["debug_raw.jpg", "debug_enhanced.jpg"]:
+_backend_dir = os.path.dirname(os.path.abspath(__file__))
+for _fp in [
+    os.path.join(_backend_dir, "debug_raw.jpg"),
+    os.path.join(_backend_dir, "debug_enhanced.jpg"),
+    os.path.join(_backend_dir, "..", "backend", "debug_raw.jpg"),
+    "debug_raw.jpg",
+    "backend/debug_raw.jpg"
+]:
     if os.path.exists(_fp):
         try:
             with open(_fp, "rb") as _f:

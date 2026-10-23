@@ -1,0 +1,24 @@
+name: EchoVision 24/7 Keep Alive
+
+on:
+  schedule:
+    # Run every 10 minutes to prevent Render free tier from sleeping (sleeps at 15m)
+    - cron: '*/10 * * * *'
+  workflow_dispatch:
+
+jobs:
+  ping:
+    name: Ping Services
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping EchoVision Backend Health (Zero NVIDIA Cost)
+        run: |
+          echo "Pinging EchoVision Render Backend..."
+          response=$(curl -s -o /dev/null -w "%{http_code}" -m 30 https://echovision-backend-w6ns.onrender.com/health)
+          echo "Backend returned HTTP $response"
+
+      - name: Ping EchoVision Frontend
+        run: |
+          echo "Pinging EchoVision Vercel Frontend..."
+          response=$(curl -s -o /dev/null -w "%{http_code}" -m 30 https://echovision45.vercel.app/)
+          echo "Frontend returned HTTP $response"

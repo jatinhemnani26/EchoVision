@@ -34,9 +34,9 @@ class CloudMultimodalEngine:
                     base_url=self.base_url,
                     api_key=self.api_key,
                     http_client=httpx.Client(
-                        timeout=httpx.Timeout(25.0, connect=6.0, read=25.0, write=6.0)
+                        timeout=httpx.Timeout(45.0, connect=15.0, read=45.0, write=15.0)
                     ),
-                    max_retries=0
+                    max_retries=1
                 )
                 logger.info(f"Connected to NVIDIA NIM Cloud Brain ({self.model})")
             except ImportError:
@@ -52,53 +52,56 @@ class CloudMultimodalEngine:
         Uses an authoritative system role to enforce the target output language,
         eliminating prompt-echo loops and guaranteeing 2 complete, natural sentences.
         """
+        has_custom_intent = bool(intent and intent.strip() and intent.strip().lower() not in [
+            "general",
+            "describe the primary object, color, and exact spatial location in front of the camera.",
+            "what is in front of the camera?",
+            "describe scene"
+        ])
+
         if lang == "hi-IN":
             system_msg = (
                 "You are EchoVision, an audio navigation guide for a visually impaired user. "
                 "You must respond ONLY in pure Hindi (हिंदी - देवनागरी लिपि). "
                 "Provide exactly 2 concise, descriptive sentences. "
-                "Sentence 1: describe the person or object directly in front (appearance, attire, posture). "
-                "Sentence 2: describe the immediate room surroundings. "
+                "Answer the user's inquiry directly based on the visual camera view. "
                 "You MUST stop immediately after sentence 2. Do NOT write a third sentence. "
                 "Never use bullet points, asterisks, numbering, or introductory headings. "
                 "End both sentences cleanly with a Hindi full stop (।)."
             )
-            user_text = "सामने क्या है? केवल 2 संक्षिप्त हिंदी वाक्यों में बताएं।"
+            user_text = f"उपयोगकर्ता का प्रश्न: '{intent}'. केवल 2 संक्षिप्त हिंदी वाक्यों में उत्तर दें।" if has_custom_intent else "सामने क्या है? केवल 2 संक्षिप्त हिंदी वाक्यों में बताएं।"
         elif lang == "es-ES":
             system_msg = (
                 "You are EchoVision, an audio navigation guide for a visually impaired user. "
                 "You must respond ONLY in fluent, natural Spanish (Español). "
                 "Provide exactly 2 concise, descriptive sentences in Spanish. "
-                "Sentence 1: describe the person or object directly in front (appearance, posture, distance). "
-                "Sentence 2: describe the immediate room surroundings. "
+                "Answer the user's inquiry directly based on the visual camera view. "
                 "You MUST stop immediately after sentence 2. Do NOT write a third sentence. "
                 "Never use bullet points, asterisks, numbering, or introductory headings. "
                 "Finish both sentences completely with a period."
             )
-            user_text = "¿Qué hay enfrente? Describe directamente en 2 oraciones completas en español."
+            user_text = f"Pregunta del usuario: '{intent}'. Responde concisamente en 2 oraciones en español." if has_custom_intent else "¿Qué hay enfrente? Describe directamente en 2 oraciones completas en español."
         elif lang == "fr-FR":
             system_msg = (
                 "You are EchoVision, an audio navigation guide for a visually impaired user. "
                 "You must respond ONLY in fluent, natural French (Français). "
                 "Provide exactly 2 concise, descriptive sentences in French. "
-                "Sentence 1: describe the person or object directly in front (appearance, posture, distance). "
-                "Sentence 2: describe the immediate room surroundings. "
+                "Answer the user's inquiry directly based on the visual camera view. "
                 "You MUST stop immediately after sentence 2. Do NOT write a third sentence. "
                 "Never use bullet points, asterisks, numbering, or introductory headings. "
                 "Finish both sentences completely with a period."
             )
-            user_text = "Qu'y a-t-il devant ? Décrivez directement en 2 phrases complètes en français."
+            user_text = f"Question de l'utilisateur : '{intent}'. Répondez en 2 phrases complètes en français." if has_custom_intent else "Qu'y a-t-il devant ? Décrivez directement en 2 phrases complètes en français."
         else:
             system_msg = (
                 "You are EchoVision, an audio navigation guide for a visually impaired user. "
                 "Provide exactly 2 concise, descriptive sentences. "
-                "Sentence 1: describe the person or object directly in front (appearance, clothing, posture, distance). "
-                "Sentence 2: describe the immediate room surroundings and lighting. "
+                "Answer the user's inquiry directly based on the visual camera view. "
                 "You MUST stop immediately after sentence 2. Do NOT write a third sentence. "
                 "Never use bullet points, asterisks, numbering, or conversational preambles. "
                 "Finish both sentences completely with a period."
             )
-            user_text = "What is in front of the camera? Describe directly in 2 sentences for spatial navigation."
+            user_text = f"User query: '{intent}'. Answer directly and concisely in exactly 2 sentences based on the camera view." if has_custom_intent else "What is in front of the camera? Describe directly in 2 sentences for spatial navigation."
 
         return [
             {"role": "system", "content": system_msg},
@@ -231,10 +234,39 @@ class CloudMultimodalEngine:
                             break
 
             if not has_yielded:
-                yield "Scene visible and illuminated directly in front of the camera."
+                logger.warning("Stream produced 0 chunks. Executing fast single-shot fallback...")
+                res = self.client.chat.completions.create(
+                    model=self.model,
+                    messages=messages,
+                    max_tokens=80,
+                    temperature=0.1,
+                    top_p=0.7,
+                    stream=False
+                )
+                content = res.choices[0].message.content.strip()
+                if content:
+                    yield content
+                else:
+                    yield "Scene visible and illuminated directly in front of the camera."
 
         except Exception as e:
-            logger.warning(f"Streaming NVIDIA NIM latency / error ({e}). Yielding perceptual fallback.")
+            logger.warning(f"Streaming NVIDIA NIM latency / error ({e}). Attempting single-shot fallback...")
+            try:
+                res = self.client.chat.completions.create(
+                    model=self.model,
+                    messages=messages,
+                    max_tokens=80,
+                    temperature=0.1,
+                    top_p=0.7,
+                    stream=False
+                )
+                content = res.choices[0].message.content.strip()
+                if content:
+                    yield content
+                    return
+            except Exception as e2:
+                logger.error(f"Single-shot fallback also failed: {e2}")
+
             if ocr_fallback_text and len(ocr_fallback_text.strip()) > 2:
                 yield f"Visible text in view: {ocr_fallback_text.strip()}."
             else:
