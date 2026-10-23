@@ -1,7 +1,9 @@
 <p align="center">
+  <img src="https://img.shields.io/badge/License-MIT-green" />
+  <img src="https://img.shields.io/badge/MCP-Spec_2025--11--25-purple?logo=anthropic&logoColor=white" />
   <img src="https://img.shields.io/badge/Python-3.11-blue?logo=python&logoColor=white" />
   <img src="https://img.shields.io/badge/FastAPI-0.111-009688?logo=fastapi&logoColor=white" />
-  <img src="https://img.shields.io/badge/NVIDIA_NIM-Llama_3.2_Vision-76B900?logo=nvidia&logoColor=white" />
+  <img src="https://img.shields.io/badge/NVIDIA_NIM-Vision_VLM-76B900?logo=nvidia&logoColor=white" />
   <img src="https://img.shields.io/badge/Alexa-Custom_Skill-00CAFF?logo=amazon-alexa&logoColor=white" />
   <img src="https://img.shields.io/badge/WebRTC-Camera-333?logo=webrtc&logoColor=white" />
   <img src="https://img.shields.io/badge/Deploy-Vercel_+_Render-000?logo=vercel&logoColor=white" />
@@ -105,21 +107,25 @@ Not a classification tag. Not a JSON blob. A real, human sentence. In English, H
 
 ```
 EchoVision/
+├── .github/
+│   └── workflows/
+│       └── keep_alive.yml  # 24/7 automated ping runner (zero GPU credit cost)
 ├── frontend/
 │   ├── index.html          # Everything. WebGL shader, camera, UI, voice, TTS.
 │   └── netflix-intro.mp3   # Splash screen empathy reveal audio
 │
 ├── backend/
-│   ├── main.py             # FastAPI app — /analyze, /alexa, /sync_frame + rate limiter
+│   ├── main.py             # FastAPI app — /stream, /mcp, /alexa, /sync_frame
 │   ├── requirements.txt    # Lean deps (no PyTorch, no bloat)
 │   ├── runtime.txt         # Python 3.11.9 pinned for Render
 │   └── vision/
 │       ├── camera.py       # Platform-safe camera (Windows CAP_DSHOW / Linux CAP_ANY)
-│       ├── cloud_brain.py  # NVIDIA NIM integration + multilingual prompt engine
+│       ├── cloud_brain.py  # NVIDIA NIM dual-model cascade + multilingual engine
 │       ├── ocr.py          # Tesseract wrapper with graceful fallback
 │       ├── router.py       # 2-Tier triage: edge OCR vs cloud VLM
 │       └── preprocessor.py # Frame optimization before inference
 │
+├── LICENSE                 # MIT License (Open Source)
 ├── .python-version         # 3.11.9
 └── README.md               # You are here
 ```
@@ -173,16 +179,18 @@ The frontend auto-detects local vs production and switches the API URL according
 
 ---
 
-## API Endpoints & Security
+## API Endpoints & Protocols
 
 | Method | Endpoint | What It Does |
 |--------|----------|-------------|
-| `GET` | `/health` | Health check — returns service and sensor status |
-| `POST` | `/api/v1/vision/analyze` | Client-authenticated frame analysis via 2-Tier router & NVIDIA NIM |
+| `GET` | `/health` | Health check & sensor telemetry — returns service and sensor status |
+| `POST` | `/api/v1/vision/analyze/stream` | Server-Sent Events (SSE) sub-second streaming vision token pipeline |
+| `GET/POST` | `/api/v1/mcp` | Model Context Protocol (MCP spec 2025-11-25) Streamable HTTP tool server |
+| `POST` | `/api/v1/alexa` | Official Alexa Custom Skill webhook with SSML formatting & frame lookup |
+| `POST` | `/api/v1/vision/analyze` | Synchronous frame analysis via 2-Tier router & NVIDIA NIM |
 | `POST` | `/api/v1/vision/sync_frame` | Browser pushes live camera frame buffer (called every 3s automatically) |
-| `POST` | `/api/v1/alexa` | Alexa webhook — reads latest live frame, describes it, returns Alexa JSON |
 
-> **🛡️ Built-in Token & Quota Protection:** The backend enforces per-IP sliding-window rate limits (max 20 req/min) and a global hourly circuit breaker, preventing token exhaustion and bot spam while keeping the public demo fast and accessible.
+> **🛡️ High Availability & Reliability:** The backend features connection resilience, dual-model VLM failover cascades, and automated GitHub Actions keep-alive pings every 10 minutes to maintain persistent 24/7 uptime without consuming GPU credits.
 
 ---
 
