@@ -191,6 +191,97 @@ async def alexa_webhook(req: dict):
     return {}
 
 
+@app.get("/api/v1/mcp")
+def mcp_capabilities():
+    """
+    Alexa+ MCP Server Specification (spec 2025-11-25+, Streamable HTTP).
+    Exposes EchoVision perception capabilities as an autonomous agent tool for Alexa+.
+    """
+    return {
+        "mcp_version": "2025-11-25",
+        "server_info": {
+            "name": "EchoVision Alexa+ Spatial Vision MCP",
+            "version": "3.0"
+        },
+        "tools": [
+            {
+                "name": "perceive_scene",
+                "description": "Perceive the real-time visual environment in front of the user's camera and return a 2-sentence spatial navigation description.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "intent": {"type": "string", "description": "Specific question or navigational intent."},
+                        "lang": {"type": "string", "enum": ["en-US", "hi-IN", "es-ES", "fr-FR"], "default": "en-US"}
+                    }
+                }
+            }
+        ]
+    }
+
+
+@app.post("/api/v1/mcp")
+async def mcp_rpc_handler(req: dict):
+    """
+    Alexa+ Streamable HTTP JSON-RPC 2.0 Handler.
+    Supports tool execution by Alexa+ LLM Agent Orchestrators.
+    """
+    method = req.get("method")
+    req_id = req.get("id", 1)
+
+    if method == "tools/list":
+        return {
+            "jsonrpc": "2.0",
+            "id": req_id,
+            "result": {
+                "tools": [
+                    {
+                        "name": "perceive_scene",
+                        "description": "Capture live camera visual context and return concise 2-sentence spatial navigation audio guidance.",
+                        "inputSchema": {
+                            "type": "object",
+                            "properties": {
+                                "intent": {"type": "string", "description": "Query or scene intent"},
+                                "lang": {"type": "string", "default": "en-US"}
+                            }
+                        }
+                    }
+                ]
+            }
+        }
+    elif method == "tools/call":
+        params = req.get("params", {})
+        args = params.get("arguments", {})
+        intent = args.get("intent", "general")
+        lang = args.get("lang", "en-US")
+
+        base64_image = LATEST_LIVE_FRAME_B64 or CACHED_FALLBACK_B64
+        if not base64_image:
+            frame = camera_manager.get_frame()
+            if frame is not None:
+                _, buf = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 70])
+                base64_image = base64.b64encode(buf).decode('utf-8')
+
+        if not base64_image:
+            res_text = "EchoVision sensor is warming up. Please point camera forward."
+        else:
+            cloud_res = cloud_brain.analyze_image(base64_image, intent, lang=lang, max_tokens=100)
+            res_text = cloud_res.get("description", "Optical sensor active.")
+
+        return {
+            "jsonrpc": "2.0",
+            "id": req_id,
+            "result": {
+                "content": [
+                    {
+                        "type": "text",
+                        "text": res_text
+                    }
+                ]
+            }
+        }
+    return {"jsonrpc": "2.0", "id": req_id, "error": {"code": -32601, "message": "Method not found"}}
+
+
 @app.get("/api/v1/vision/stream")
 def video_feed(cam_index: int = 0):
     """MJPEG stream endpoint for the Atmos Gallery Frontend HUD."""
