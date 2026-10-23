@@ -94,14 +94,12 @@ class CloudMultimodalEngine:
             user_text = f"Question de l'utilisateur : '{intent}'. Répondez en 2 phrases complètes en français." if has_custom_intent else "Qu'y a-t-il devant ? Décrivez directement en 2 phrases complètes en français."
         else:
             system_msg = (
-                "You are EchoVision, an audio navigation guide for a visually impaired user. "
-                "Provide exactly 2 concise, descriptive sentences. "
-                "Answer the user's inquiry directly based on the visual camera view. "
-                "You MUST stop immediately after sentence 2. Do NOT write a third sentence. "
-                "Never use bullet points, asterisks, numbering, or conversational preambles. "
-                "Finish both sentences completely with a period."
+                "You are EchoVision, an audio visual guide. "
+                "Describe the scene or answer the query directly based on the visual camera view in exactly 2 concise sentences. "
+                "Do NOT output any internal thoughts, reasoning steps, or meta-commentary. "
+                "Finish both sentences cleanly with a period."
             )
-            user_text = f"User query: '{intent}'. Answer directly and concisely in exactly 2 sentences based on the camera view." if has_custom_intent else "What is in front of the camera? Describe directly in 2 sentences for spatial navigation."
+            user_text = f"User asks: '{intent}'. Answer in 2 clear sentences based on the camera view." if has_custom_intent else "Describe what is in front of the camera in 2 clear sentences."
 
         return [
             {"role": "system", "content": system_msg},
@@ -149,20 +147,17 @@ class CloudMultimodalEngine:
         model_success = self.model
         for m in models_to_try:
             try:
-                tokens_limit = 350 if "nemotron" in m.lower() else max_tokens
+                tokens_limit = 600 if "nemotron" in m.lower() else max_tokens
                 response = self.client.chat.completions.create(
                     model=m,
                     messages=messages,
                     max_tokens=tokens_limit,
                     temperature=0.1,
                     top_p=0.7,
-                    timeout=10.0
+                    timeout=12.0
                 )
                 msg = response.choices[0].message
                 content = (msg.content or "").strip()
-                if not content and getattr(msg, "reasoning_content", None):
-                    lines = [l.strip() for l in msg.reasoning_content.split('\n') if l.strip() and not l.startswith('*') and not l.startswith('#') and len(l) > 20]
-                    content = lines[-1] if lines else ""
 
                 if content:
                     raw_text = content
@@ -243,21 +238,18 @@ class CloudMultimodalEngine:
         extracted_text = None
         for m in models_to_try:
             try:
-                tokens_limit = 350 if "nemotron" in m.lower() else max_tokens
+                tokens_limit = 600 if "nemotron" in m.lower() else max_tokens
                 res = self.client.chat.completions.create(
                     model=m,
                     messages=messages,
                     max_tokens=tokens_limit,
                     temperature=0.1,
                     top_p=0.7,
-                    timeout=10.0
+                    timeout=12.0
                 )
                 if res.choices and len(res.choices) > 0:
                     msg = res.choices[0].message
                     content = (msg.content or "").strip()
-                    if not content and getattr(msg, "reasoning_content", None):
-                        lines = [l.strip() for l in msg.reasoning_content.split('\n') if l.strip() and not l.startswith('*') and not l.startswith('#') and len(l) > 20]
-                        content = lines[-1] if lines else ""
 
                     if content:
                         extracted_text = content
