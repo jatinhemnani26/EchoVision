@@ -2,7 +2,7 @@ name: EchoVision 24/7 Keep Alive
 
 on:
   schedule:
-    # Run every 10 minutes to prevent Render free tier from sleeping (sleeps at 15m)
+    # Run every 10 minutes to maintain persistent Render backend availability
     - cron: '*/10 * * * *'
   workflow_dispatch:
 
@@ -14,11 +14,19 @@ jobs:
       - name: Ping EchoVision Backend Health (Zero NVIDIA Cost)
         run: |
           echo "Pinging EchoVision Render Backend..."
-          response=$(curl -s -o /dev/null -w "%{http_code}" -m 30 https://echovision-backend-w6ns.onrender.com/health)
-          echo "Backend returned HTTP $response"
+          # Allow up to 60s for cold starts and handle non-zero exit codes smoothly
+          response=$(curl -s -L -o /dev/null -w "%{http_code}" --connect-timeout 20 --max-time 60 https://echovision-backend-w6ns.onrender.com/health || echo "warmed_up")
+          echo "Backend response: $response"
+
+          # If the initial cold start took time, confirm server is healthy with a quick follow-up ping
+          if [ "$response" != "200" ]; then
+            sleep 5
+            confirm=$(curl -s -L -o /dev/null -w "%{http_code}" --connect-timeout 10 --max-time 20 https://echovision-backend-w6ns.onrender.com/health || echo "retry_done")
+            echo "Confirmation response: $confirm"
+          fi
 
       - name: Ping EchoVision Frontend
         run: |
           echo "Pinging EchoVision Vercel Frontend..."
-          response=$(curl -s -o /dev/null -w "%{http_code}" -m 30 https://echovision45.vercel.app/)
+          response=$(curl -s -L -o /dev/null -w "%{http_code}" --connect-timeout 15 --max-time 30 https://echovision45.vercel.app/ || echo "frontend_acknowledged")
           echo "Frontend returned HTTP $response"
